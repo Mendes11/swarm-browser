@@ -1,0 +1,23 @@
+clusters:
+  exactly:
+    name: "Exactly"
+    host: "manager-01.exactlylabs.com"
+    nodes:
+      manager-01:
+        host: "manager-01.exactlylabs.com"
+        hostname: "manager-01.exactlylabs.com"
+
+  janus:
+    name: "Janus"
+    host: "swarm-02.janushcp.com"
+    nodes:
+      swarm-02:
+        host: "swarm-02.janushcp.com"
+        hostname: "swarm-02.janushcp.com"
+      worker-01:
+        host: "worker-01.janushcp.com"
+        hostname: "worker-01.janushcp.com"
+      worker-02:
+        host: "worker-02.janushcp.com"
+        hostname: "worker-02.janushcp.com"
+

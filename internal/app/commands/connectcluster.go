@@ -1,33 +1,37 @@
-package stackpicker
+package commands
 
 import (
 	"context"
-	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/mendes11/swarm-browser/internal/app/types"
+	"github.com/mendes11/swarm-browser/internal/config"
+	"github.com/mendes11/swarm-browser/internal/services/connector"
 	"github.com/moby/moby/api/types/swarm"
-	"github.com/moby/moby/client"
 )
 
-// StacksUpdated is sent when the list of stacks is updated
-type StacksUpdated struct {
-	Stacks      []types.Stack
-	LastUpdated time.Time
+type ConnectedToClusterMsg struct {
+	Cluster config.Cluster
+	Stacks  []types.Stack
 }
 
-// StackSelected is sent when a user selects a stack
-type StackSelected struct {
-	Stack types.Stack
+type ConnectionErrorMsg struct {
+	Cluster config.Cluster
+	Node    *config.Node
+	Err     error
 }
 
-func ListStacksCommandFactory(ctx context.Context, cli *client.Client) func() tea.Msg {
+func ConnectToClusterCommand(ctx context.Context, conn *connector.Connector, cluster config.Cluster) tea.Cmd {
 	return func() tea.Msg {
+		cli, err := conn.ClientForHost(cluster.Host)
+		if err != nil {
+			return ConnectionErrorMsg{Cluster: cluster, Err: err}
+		}
 		services, err := cli.ServiceList(ctx, swarm.ServiceListOptions{
 			Status: true,
 		})
 		if err != nil {
-			panic(err)
+			return ConnectionErrorMsg{Cluster: cluster, Err: err}
 		}
 
 		stacks := make(map[string]*types.Stack)
@@ -47,9 +51,6 @@ func ListStacksCommandFactory(ctx context.Context, cli *client.Client) func() te
 		for _, stack := range stacks {
 			stacksArr = append(stacksArr, *stack)
 		}
-		return StacksUpdated{
-			Stacks:      stacksArr,
-			LastUpdated: time.Now(),
-		}
+		return ConnectedToClusterMsg{Cluster: cluster, Stacks: stacksArr}
 	}
 }
