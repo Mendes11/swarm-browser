@@ -5,12 +5,15 @@ go 1.23.0
 toolchain go1.24.6
 
 require (
+	github.com/charmbracelet/bubbles v0.21.0
 	github.com/charmbracelet/bubbletea v1.3.6
 	github.com/charmbracelet/lipgloss v1.1.0
+	github.com/creack/pty v1.1.18
 	github.com/moby/moby/api v1.52.0-alpha.1
 	github.com/moby/moby/client v0.1.0-alpha.0
+	github.com/moby/term v0.5.2
 	github.com/pkg/errors v0.9.1
-	golang.org/x/crypto v0.41.0
+	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (
@@ -35,7 +38,6 @@ require (
 	github.com/mattn/go-localereader v0.0.1 // indirect
 	github.com/mattn/go-runewidth v0.0.16 // indirect
 	github.com/moby/docker-image-spec v1.3.1 // indirect
-	github.com/moby/term v0.5.2 // indirect
 	github.com/muesli/ansi v0.0.0-20230316100256-276c6243b2f6 // indirect
 	github.com/muesli/cancelreader v0.2.2 // indirect
 	github.com/muesli/termenv v0.16.0 // indirect
@@ -51,5 +53,4 @@ require (
 	golang.org/x/sync v0.16.0 // indirect
 	golang.org/x/sys v0.35.0 // indirect
 	golang.org/x/text v0.28.0 // indirect
-	gopkg.in/yaml.v3 v3.0.1 // indirect
 )

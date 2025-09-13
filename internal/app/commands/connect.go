@@ -3,9 +3,8 @@ package commands
 import (
 	"context"
 	"fmt"
-	"io"
 	"log"
-	"os"
+	"net"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/mendes11/swarm-browser/internal/app/types"
@@ -13,7 +12,6 @@ import (
 	"github.com/mendes11/swarm-browser/internal/services/connector"
 	"github.com/moby/moby/api/types/filters"
 	"github.com/moby/moby/api/types/swarm"
-	"github.com/moby/term"
 	"github.com/pkg/errors"
 )
 
@@ -22,8 +20,7 @@ type ConnectedToService struct {
 	Node        config.Node
 	Service     types.Service
 	ContainerID string
-
-	// TODO: Add connection client / channels or whatever we get.
+	Conn        net.Conn
 }
 
 func ConnectToServiceCommand(ctx context.Context, conn *connector.Connector, cluster config.Cluster, service types.Service) tea.Cmd {
@@ -55,16 +52,14 @@ func ConnectToServiceCommand(ctx context.Context, conn *connector.Connector, clu
 			if err != nil {
 				return ConnectionErrorMsg{Cluster: cluster, Err: errors.Wrap(err, "commands.ConnectToService: failed to attach to container")}
 			}
-			defer containerConn.Close()
-			// Override the terminal to display the connection
-			oldState, err := term.MakeRaw(os.Stdin.Fd())
-			if err != nil {
-				panic(err)
+			log.Printf("Attached to container %s on host %s\n", task.Status.ContainerStatus.ContainerID, nodeInfo.Host)
+			return ConnectedToService{
+				Cluster:     cluster,
+				Service:     service,
+				Node:        *nodeInfo,
+				ContainerID: task.Status.ContainerStatus.ContainerID,
+				Conn:        containerConn,
 			}
-			defer term.RestoreTerminal(os.Stdin.Fd(), oldState)
-			log.Println("Connected to Container")
-			go io.Copy(containerConn, os.Stdout)
-			io.Copy(os.Stdin, containerConn)
 		}
 		return nil
 	}
