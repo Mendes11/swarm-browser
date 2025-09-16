@@ -8,7 +8,7 @@ type Config struct {
 }
 
 var defaultConfig = &Config{
-	ClusterFilePath: "./clusters.yaml",
+	ClusterFilePath: "./clusters.yml",
 	Clusters:        nil,
 }
 

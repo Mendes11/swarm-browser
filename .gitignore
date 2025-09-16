@@ -1,2 +1,5 @@
 *.env
 *.log
+tmp/*
+build/*
+clusters.yml
