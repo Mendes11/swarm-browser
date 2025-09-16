@@ -1,8 +1,10 @@
 package config
 
+import "github.com/mendes11/swarm-browser/internal/core/models"
+
 type Config struct {
 	ClusterFilePath string
-	Clusters        map[string]Cluster
+	Clusters        map[string]models.Cluster
 }
 
 var defaultConfig = &Config{
