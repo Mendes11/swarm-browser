@@ -1,0 +1,228 @@
+# Development Browser Configuration
+# This file mimics the structure of clusters.yaml but with mock data for development
+
+# Define mock clusters (similar to clusters.yaml structure)
+clusters:
+  dev-local:
+    name: "Development Local"
+    host: "localhost"
+    nodes:
+      manager-01:
+        host: "localhost"
+        hostname: "dev-manager-01"
+      worker-01:
+        host: "localhost"
+        hostname: "dev-worker-01"
+      worker-02:
+        host: "localhost"
+        hostname: "dev-worker-02"
+
+  dev-staging:
+    name: "Development Staging"
+    host: "staging.local"
+    nodes:
+      staging-manager:
+        host: "staging.local"
+        hostname: "staging-manager"
+      staging-worker-01:
+        host: "staging-worker-01.local"
+        hostname: "staging-worker-01"
+      staging-worker-02:
+        host: "staging-worker-02.local"
+        hostname: "staging-worker-02"
+      staging-worker-03:
+        host: "staging-worker-03.local"
+        hostname: "staging-worker-03"
+
+# Define mock stacks that reference the clusters above
+stacks:
+  # Stacks for dev-local cluster
+  - name: frontend
+    cluster: dev-local
+    services:
+      - name: web
+        desired_tasks: 3
+        running_tasks: 3
+        tasks:
+          - node: manager-01
+            status: running
+          - node: worker-01
+            status: running
+          - node: worker-02
+            status: running
+
+      - name: nginx
+        desired_tasks: 2
+        running_tasks: 2
+
+      - name: cdn
+        desired_tasks: 1
+        running_tasks: 1
+
+  - name: backend
+    cluster: dev-local
+    services:
+      - name: api
+        desired_tasks: 5
+        running_tasks: 4  # One task will show as failed/pending
+
+      - name: worker
+        desired_tasks: 3
+        running_tasks: 2
+        tasks:
+          - node: manager-01
+            status: running
+          - node: worker-01
+            status: running
+          - node: worker-02
+            status: pending
+
+      - name: scheduler
+        desired_tasks: 1
+        running_tasks: 1
+        tasks:
+          - id: scheduler-task-001
+            container_id: scheduler-container-001
+            node: manager-01
+            status: running
+
+  - name: database
+    cluster: dev-local
+    services:
+      - name: postgres-master
+        desired_tasks: 1
+        running_tasks: 1
+        tasks:
+          - node: manager-01
+            status: running
+
+      - name: postgres-replica
+        desired_tasks: 2
+        running_tasks: 2
+        tasks:
+          - node: worker-01
+            status: running
+          - node: worker-02
+            status: running
+
+      - name: redis
+        desired_tasks: 3
+        running_tasks: 3
+
+  # Stacks for dev-staging cluster
+  - name: monitoring
+    cluster: dev-staging
+    services:
+      - name: prometheus
+        desired_tasks: 2
+        running_tasks: 2
+        tasks:
+          - node: staging-manager
+            status: running
+          - node: staging-worker-01
+            status: running
+
+      - name: grafana
+        desired_tasks: 1
+        running_tasks: 1
+        tasks:
+          - node: staging-manager
+            status: running
+
+      - name: alertmanager
+        desired_tasks: 1
+        running_tasks: 1
+
+      - name: node-exporter
+        desired_tasks: 4  # One per node
+        running_tasks: 4
+        tasks:
+          - node: staging-manager
+            status: running
+          - node: staging-worker-01
+            status: running
+          - node: staging-worker-02
+            status: running
+          - node: staging-worker-03
+            status: running
+
+  - name: messaging
+    cluster: dev-staging
+    services:
+      - name: rabbitmq
+        desired_tasks: 3
+        running_tasks: 3
+        tasks:
+          - node: staging-worker-01
+            status: running
+          - node: staging-worker-02
+            status: running
+          - node: staging-worker-03
+            status: running
+
+      - name: kafka
+        desired_tasks: 3
+        running_tasks: 3
+
+      - name: zookeeper
+        desired_tasks: 3
+        running_tasks: 3
+
+  - name: logging
+    cluster: dev-staging
+    services:
+      - name: fluentd
+        desired_tasks: 4
+        running_tasks: 4
+
+      - name: logstash
+        desired_tasks: 2
+        running_tasks: 2
+
+      - name: kibana
+        desired_tasks: 1
+        running_tasks: 1
+
+  # Example of a problematic stack for testing error states
+  - name: testing
+    cluster: dev-staging
+    services:
+      - name: service-with-issues
+        desired_tasks: 10
+        running_tasks: 6
+        tasks:
+          - node: staging-manager
+            status: running
+          - node: staging-worker-01
+            status: running
+          - node: staging-worker-02
+            status: running
+          - node: staging-worker-03
+            status: running
+          - node: staging-worker-01
+            status: running
+          - node: staging-worker-02
+            status: running
+          - node: staging-worker-03
+            status: failed
+          - node: staging-manager
+            status: failed
+          - node: staging-worker-01
+            status: pending
+          - node: staging-worker-02
+            status: pending
+
+      - name: unstable-service
+        desired_tasks: 5
+        running_tasks: 2
+        tasks:
+          - node: staging-worker-01
+            status: running
+          - node: staging-worker-02
+            status: running
+          - node: staging-worker-03
+            status: failed
+          - node: staging-manager
+            status: shutdown
+          - node: staging-worker-01
+            status: rejected
