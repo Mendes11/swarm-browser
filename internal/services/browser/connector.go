@@ -1,4 +1,4 @@
-package connector
+package browser
 
 import (
 	"context"
@@ -19,26 +19,26 @@ import (
 // When connecting to a host, it first establishes an SSH tunnel with the host,
 // forwarding the remote Docker socket to a local temporary socket file.
 // So it's important that the user has SSH access to the remote hosts already set.
-type Connector struct {
+type DockerConnector struct {
 	// Maps hostnames to Docker clients
 	clients        map[string]*client.Client
 	sshConnections map[string]*exec.Cmd
 }
 
-type Options func(*Connector)
+type Options func(*DockerConnector)
 
-func New(opts ...Options) (*Connector, error) {
-	conn := &Connector{
+func NewConnector(opts ...Options) *DockerConnector {
+	conn := &DockerConnector{
 		clients:        make(map[string]*client.Client),
 		sshConnections: make(map[string]*exec.Cmd),
 	}
 	for _, opt := range opts {
 		opt(conn)
 	}
-	return conn, nil
+	return conn
 }
 
-func (c *Connector) Close() error {
+func (c *DockerConnector) Close() error {
 	for host, cli := range c.clients {
 		if err := cli.Close(); err != nil {
 			return errors.Wrap(err, fmt.Sprintf("failed to close Docker client for host %s", host))
@@ -61,7 +61,7 @@ func (c *Connector) Close() error {
 // through the ~/.ssh/config file.
 //
 // Make sure you call Close() at the end of your program to ensure all connections are properly closed.
-func (c *Connector) ClientForHost(host string) (*client.Client, error) {
+func (c *DockerConnector) ClientForHost(host string) (*client.Client, error) {
 	if _, exists := c.clients[host]; !exists {
 		return c.connectToHost(host)
 	}
@@ -70,7 +70,7 @@ func (c *Connector) ClientForHost(host string) (*client.Client, error) {
 
 // AttachToContainer executes a command in a running container, returning an open connection to it.
 // IMPORTANT: You must make sure to close the connection to avoid any issues.
-func (c *Connector) AttachToContainer(ctx context.Context, host string, containerID string, cmd []string) (net.Conn, error) {
+func (c *DockerConnector) AttachToContainer(ctx context.Context, host string, containerID string, cmd []string) (net.Conn, error) {
 	cli, err := c.ClientForHost(host)
 	if err != nil {
 		return nil, errors.Wrap(err, "Connector#AttachToContainer: failed to retrieve host")
@@ -94,7 +94,7 @@ func (c *Connector) AttachToContainer(ctx context.Context, host string, containe
 	return containerCli.Conn, nil
 }
 
-func (c *Connector) connectToHost(host string) (cli *client.Client, err error) {
+func (c *DockerConnector) connectToHost(host string) (cli *client.Client, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			log.Printf("Recovered in connectToHost for host %s: %v", host, r)
