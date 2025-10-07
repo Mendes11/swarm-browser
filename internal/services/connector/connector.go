@@ -1,10 +1,9 @@
-package browser
+package connector
 
 import (
 	"context"
 	"fmt"
 	"log"
-	"net"
 	"os/exec"
 	"time"
 
@@ -39,19 +38,22 @@ func NewConnector(opts ...Options) *DockerConnector {
 }
 
 func (c *DockerConnector) Close() error {
+	log.Println("DockerConnector: Closing")
 	for host, cli := range c.clients {
+		log.Printf("DockerConnector: Closing %s\n", host)
 		if err := cli.Close(); err != nil {
 			return errors.Wrap(err, fmt.Sprintf("failed to close Docker client for host %s", host))
 		}
 	}
 
 	for host, sshConn := range c.sshConnections {
+		log.Printf("DockerConnector: Closing SSH process for %s\n", host)
 		sshConn.Process.Kill()
 		if err := sshConn.Process.Kill(); err != nil {
 			log.Printf("failed to kill SSH connection for host %s: %v", host, err)
 		}
 		sshConn.Wait()
-		log.Printf("SSH connection to host %s closed\n", host)
+		log.Printf("DockerConnector: SSH connection to host %s closed\n", host)
 	}
 	return nil
 }
@@ -70,7 +72,7 @@ func (c *DockerConnector) ClientForHost(host string) (*client.Client, error) {
 
 // AttachToContainer executes a command in a running container, returning an open connection to it.
 // IMPORTANT: You must make sure to close the connection to avoid any issues.
-func (c *DockerConnector) AttachToContainer(ctx context.Context, host string, containerID string, cmd []string) (net.Conn, error) {
+func (c *DockerConnector) AttachToContainer(ctx context.Context, host string, containerID string, cmd []string) (*ContainerConnection, error) {
 	cli, err := c.ClientForHost(host)
 	if err != nil {
 		return nil, errors.Wrap(err, "Connector#AttachToContainer: failed to retrieve host")
@@ -91,7 +93,7 @@ func (c *DockerConnector) AttachToContainer(ctx context.Context, host string, co
 	if err != nil {
 		return nil, errors.Wrap(err, "Connector#AttachToContainer: failed to attach to container")
 	}
-	return containerCli.Conn, nil
+	return &ContainerConnection{cli: cli, attachID: execResp.ID, containerID: containerID, conn: containerCli.Conn}, nil
 }
 
 func (c *DockerConnector) connectToHost(host string) (cli *client.Client, err error) {
