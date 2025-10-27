@@ -14,7 +14,7 @@ func TestDevBrowser(t *testing.T) {
 		Clusters: map[string]models.Cluster{
 			"test-cluster": {
 				Name: "Test Cluster",
-				Host: "test.local",
+				Node: models.Node{Host: "test.local"},
 				Nodes: map[string]models.Node{
 					"test-node-1": {Host: "test-node-1.local", Hostname: "test-node-1"},
 					"test-node-2": {Host: "test-node-2.local", Hostname: "test-node-2"},
@@ -221,7 +221,7 @@ func TestLoadConfig(t *testing.T) {
 			Clusters: map[string]models.Cluster{
 				"cluster1": {
 					Name: "Cluster 1",
-					Host: "cluster1.local",
+					Node: models.Node{Host: "cluster1.local"},
 					Nodes: map[string]models.Node{
 						"node1": {Host: "node1.local", Hostname: "node1"},
 					},
@@ -289,7 +289,7 @@ func TestGetNodeFromCluster(t *testing.T) {
 		Clusters: map[string]models.Cluster{
 			"test": {
 				Name: "Test",
-				Host: "test.local",
+				Node: models.Node{Host: "test.local"},
 				Nodes: map[string]models.Node{
 					"node1": {Host: "node1.local", Hostname: "node1"},
 					"node2": {Host: "node2.local", Hostname: "node2"},

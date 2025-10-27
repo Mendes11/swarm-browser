@@ -69,6 +69,33 @@ func (d *DevBrowser) GetCluster() models.Cluster {
 	return d.config.Clusters[d.clusterName]
 }
 
+// InspectNode implements core.ClusterBrowser by returning mock node information
+func (d *DevBrowser) InspectNode(node models.Node) (*models.NodeInfo, error) {
+	cluster := d.config.Clusters[d.clusterName]
+
+	// Verify the node exists in the cluster
+	found := false
+	for _, clusterNode := range cluster.Nodes {
+		if clusterNode.Host == node.Host && clusterNode.Hostname == node.Hostname {
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		return nil, fmt.Errorf("node %s not found in cluster %s", node.Hostname, d.clusterName)
+	}
+
+	// Return mock node info
+	return &models.NodeInfo{
+		Role:     "manager", // Default to manager for dev
+		Name:     node.Hostname,
+		CPUs:     4,
+		Memory:   8589934592, // 8GB in bytes
+		Platform: "linux/amd64",
+	}, nil
+}
+
 // ListStacks implements core.ClusterBrowser using config data
 func (d *DevBrowser) ListStacks(ctx context.Context) ([]models.Stack, error) {
 	stackConfigs := d.config.GetStacksForCluster(d.clusterName)
@@ -203,7 +230,7 @@ func (d *DevBrowser) ListTasks(ctx context.Context, service models.Service) ([]m
 }
 
 // AttachToService implements core.ClusterBrowser with local terminal simulation
-func (d *DevBrowser) AttachToService(ctx context.Context, service models.Service, cmd []string) (net.Conn, error) {
+func (d *DevBrowser) AttachToService(ctx context.Context, service models.Service, cmd []string) (core.ContainerConnection, error) {
 	// Get tasks to find a running one
 	tasks, err := d.ListTasks(ctx, service)
 	if err != nil {
@@ -326,11 +353,14 @@ func (d *DevBrowser) AttachToService(ctx context.Context, service models.Service
 		serverConn.Close()
 	}()
 
-	return clientConn, nil
+	return &DevContainerConnection{
+		conn:        clientConn,
+		containerID: runningTask.ContainerID,
+	}, nil
 }
 
 // AttachToTask implements core.ClusterBrowser by attaching to a specific task
-func (d *DevBrowser) AttachToTask(ctx context.Context, task models.Task, cmd []string) (net.Conn, error) {
+func (d *DevBrowser) AttachToTask(ctx context.Context, task models.Task, cmd []string) (core.ContainerConnection, error) {
 	// Create a pair of connected pipes to simulate network connection
 	clientConn, serverConn := net.Pipe()
 
@@ -441,7 +471,10 @@ func (d *DevBrowser) AttachToTask(ctx context.Context, task models.Task, cmd []s
 		serverConn.Close()
 	}()
 
-	return clientConn, nil
+	return &DevContainerConnection{
+		conn:        clientConn,
+		containerID: task.ContainerID,
+	}, nil
 }
 
 // Close implements core.ClusterBrowser
@@ -479,4 +512,38 @@ func (d *DevBrowser) parseTaskStatus(status string) swarm.TaskState {
 	default:
 		return swarm.TaskStateRunning
 	}
+}
+
+// DevContainerConnection wraps a net.Conn to implement core.ContainerConnection
+type DevContainerConnection struct {
+	conn        net.Conn
+	containerID string
+}
+
+// Ensure it conforms to the interface
+var _ core.ContainerConnection = &DevContainerConnection{}
+
+// ResizeTTY is a no-op for dev browser since we're using local shell
+func (d *DevContainerConnection) ResizeTTY(ctx context.Context, width, height uint) error {
+	// Local shell processes don't support TTY resize via our interface
+	// In a real implementation, this would send window size change signals
+	return nil
+}
+
+// ContainerID returns the mock container ID
+func (d *DevContainerConnection) ContainerID() string {
+	return d.containerID
+}
+
+// Conn returns the underlying network connection
+func (d *DevContainerConnection) Conn() net.Conn {
+	return d.conn
+}
+
+// Close closes the underlying connection
+func (d *DevContainerConnection) Close() error {
+	if d.conn != nil {
+		return d.conn.Close()
+	}
+	return nil
 }

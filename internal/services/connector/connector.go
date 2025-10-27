@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 	"os/exec"
 	"time"
 
@@ -13,6 +14,11 @@ import (
 	"github.com/moby/moby/client"
 )
 
+type sshConnection struct {
+	Cmd        *exec.Cmd
+	SocketPath string
+}
+
 // Connector manages the connections to remote Docker hosts
 //
 // When connecting to a host, it first establishes an SSH tunnel with the host,
@@ -21,7 +27,7 @@ import (
 type DockerConnector struct {
 	// Maps hostnames to Docker clients
 	clients        map[string]*client.Client
-	sshConnections map[string]*exec.Cmd
+	sshConnections map[string]sshConnection
 }
 
 type Options func(*DockerConnector)
@@ -29,7 +35,7 @@ type Options func(*DockerConnector)
 func NewConnector(opts ...Options) *DockerConnector {
 	conn := &DockerConnector{
 		clients:        make(map[string]*client.Client),
-		sshConnections: make(map[string]*exec.Cmd),
+		sshConnections: make(map[string]sshConnection),
 	}
 	for _, opt := range opts {
 		opt(conn)
@@ -48,12 +54,14 @@ func (c *DockerConnector) Close() error {
 
 	for host, sshConn := range c.sshConnections {
 		log.Printf("DockerConnector: Closing SSH process for %s\n", host)
-		sshConn.Process.Kill()
-		if err := sshConn.Process.Kill(); err != nil {
+		sshConn.Cmd.Process.Kill()
+		if err := sshConn.Cmd.Process.Kill(); err != nil {
 			log.Printf("failed to kill SSH connection for host %s: %v", host, err)
 		}
-		sshConn.Wait()
+		sshConn.Cmd.Wait()
 		log.Printf("DockerConnector: SSH connection to host %s closed\n", host)
+		os.Remove(sshConn.SocketPath)
+		log.Printf("DockerConnector: Removed socket file at %s\n", sshConn.SocketPath)
 	}
 	return nil
 }
@@ -103,19 +111,23 @@ func (c *DockerConnector) connectToHost(host string) (cli *client.Client, err er
 			err = fmt.Errorf("panic occurred: %v", r)
 		}
 	}()
-
+	if host == "" {
+		return nil, fmt.Errorf("connector.DockerConnector#connectToHost: host is empty.")
+	}
 	log.Printf("Establishing SSH connection to host %s\n", host)
 	socketPath := fmt.Sprintf("/tmp/swarm-browser-%d.sock", time.Now().UnixNano())
 	sshCommand := exec.Command("ssh", "-N", "-L", fmt.Sprintf("%s:/var/run/docker.sock", socketPath), host)
+	sshCommand.Stdout = log.Writer()
+	sshCommand.Stderr = log.Writer()
 	if err := sshCommand.Start(); err != nil {
 		log.Println("Failed to start SSH command:", err)
 		return nil, errors.Wrap(err, fmt.Sprintf("failed to start SSH tunnel to host %s", host))
 	}
 	log.Printf("SSH connection to host %s established with PID %d\n", host, sshCommand.Process.Pid)
-	c.sshConnections[host] = sshCommand
+	c.sshConnections[host] = sshConnection{Cmd: sshCommand, SocketPath: socketPath}
 
 	// Wait for the socket to be available
-	if err := waitForSocket(socketPath, 5*time.Second); err != nil {
+	if err := waitForSocket(socketPath, 15*time.Second); err != nil {
 		return nil, errors.Wrap(err, fmt.Sprintf("failed to connect to Docker socket for host %s", host))
 	}
 

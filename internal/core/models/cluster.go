@@ -1,8 +1,8 @@
 package models
 
 type Cluster struct {
+	Node  `yaml:",inline"`
 	Name  string          `yaml:"name"`
-	Host  string          `yaml:"host"`
 	Nodes map[string]Node `yaml:"nodes"`
 }
 

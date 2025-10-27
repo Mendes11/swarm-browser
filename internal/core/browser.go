@@ -3,7 +3,7 @@ package core
 import (
 	"context"
 	"fmt"
-	"net"
+	"log"
 	"slices"
 
 	"github.com/mendes11/swarm-browser/internal/core/models"
@@ -13,15 +13,9 @@ import (
 	"github.com/pkg/errors"
 )
 
-type ContainerConnection interface {
-	ResizeTTY(ctx context.Context, width, height uint) error
-	ContainerID() string
-	Conn() net.Conn
-	Close() error
-}
-
 // ClusterBrowser exposes methods to browse a specific Swarm Cluster
 type ClusterBrowser interface {
+	InspectNode(models.Node) (*models.NodeInfo, error)
 	ListStacks(ctx context.Context) ([]models.Stack, error)
 	ListServices(ctx context.Context, stack models.Stack) ([]models.Service, error)
 	ListTasks(ctx context.Context, service models.Service) ([]models.Task, error)
@@ -45,6 +39,33 @@ func New(cluster models.Cluster) *SwarmConnector {
 		Cluster:   cluster,
 		connector: connector.NewConnector(),
 	}
+}
+
+func (s *SwarmConnector) InspectNode(node models.Node) (*models.NodeInfo, error) {
+	conn, err := s.connector.ClientForHost(node.Host)
+	if err != nil {
+		return nil, errors.Wrap(err, "browser.SwarmConnector#InspectNode: ClientForHost")
+	}
+	filter := filters.NewArgs(filters.KeyValuePair{Key: "name", Value: node.Hostname})
+	nodes, err := conn.NodeList(context.Background(), swarm.NodeListOptions{Filters: filter})
+	if err != nil {
+		return nil, errors.Wrap(err, "browser.SwarmConnector#InspectNode: NodeList")
+	}
+	log.Printf("Nodes: %v\n", nodes)
+	if len(nodes) == 0 {
+		return nil, errors.Errorf("browser.SwarmConnector#InspectNode: node %s not found", node.Hostname)
+	}
+	nodeInfo, _, err := conn.NodeInspectWithRaw(context.Background(), nodes[0].ID)
+	if err != nil {
+		return nil, errors.Wrap(err, "browser.SwarmConnector#InspectNode: NodeInspectWithRaw")
+	}
+	return &models.NodeInfo{
+		Role:     string(nodeInfo.Spec.Role),
+		Name:     nodeInfo.Spec.Name,
+		Platform: fmt.Sprintf("%s - %s", nodeInfo.Description.Platform.Architecture, nodeInfo.Description.Platform.OS),
+		CPUs:     nodeInfo.Description.Resources.NanoCPUs,
+		Memory:   nodeInfo.Description.Resources.MemoryBytes,
+	}, nil
 }
 
 // AttachToService implements ClusterBrowser.

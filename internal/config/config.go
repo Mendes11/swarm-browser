@@ -1,9 +1,12 @@
 package config
 
-import "github.com/mendes11/swarm-browser/internal/core/models"
+import (
+	"github.com/mendes11/swarm-browser/internal/core/models"
+)
 
 type Config struct {
 	ClusterFilePath string
+	InitialCluster  string
 	Clusters        map[string]models.Cluster
 }
 
@@ -20,5 +23,9 @@ func LoadConfig() Config {
 		panic(err)
 	}
 	conf.Clusters = clusters.Clusters
+	for k := range conf.Clusters {
+		conf.InitialCluster = k
+		break
+	}
 	return *conf
 }

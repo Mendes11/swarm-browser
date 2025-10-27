@@ -28,7 +28,7 @@ func TestLoadClustersConfig(t *testing.T) {
 
 	tmpDir := t.TempDir()
 	tmpFile := filepath.Join(tmpDir, "clusters.yaml")
-	
+
 	if err := os.WriteFile(tmpFile, []byte(yamlContent), 0644); err != nil {
 		t.Fatalf("Failed to create temp file: %v", err)
 	}
