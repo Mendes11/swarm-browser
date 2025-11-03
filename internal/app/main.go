@@ -1,121 +1,323 @@
 package app
 
 import (
-	"context"
-	"log"
-	"strings"
+	"fmt"
 
+	"github.com/charmbracelet/bubbles/help"
+	"github.com/charmbracelet/bubbles/key"
+	"github.com/charmbracelet/bubbles/table"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/mendes11/swarm-browser/internal/app/commands"
-	"github.com/mendes11/swarm-browser/internal/app/components/list"
-	"github.com/mendes11/swarm-browser/internal/app/components/servicepicker"
-	"github.com/mendes11/swarm-browser/internal/app/components/stackpicker"
-	"github.com/mendes11/swarm-browser/internal/app/styles"
-	"github.com/mendes11/swarm-browser/internal/app/types"
 	"github.com/mendes11/swarm-browser/internal/config"
-	"github.com/mendes11/swarm-browser/internal/services/connector"
+	"github.com/mendes11/swarm-browser/internal/core"
+	"github.com/mendes11/swarm-browser/internal/core/models"
 )
 
-type ViewState int
+type Model struct {
+	conf        config.Config
+	state       ViewState
+	browser     core.ClusterBrowser
+	clusterInfo ClusterInfo
+	table       table.Model
+	keys        AppKeyMap
+	help        help.Model
+	width       int
+	height      int
 
-const (
-	ViewStackPicker ViewState = iota
-	ViewServices
-)
+	// Navigation state
+	stacks        []models.Stack
+	selectedStack models.Stack
+	services      []models.Service
 
-type App struct {
-	conn          *connector.Connector
-	conf          config.Config
-	viewState     ViewState
-	stackPicker   stackpicker.StackPicker
-	servicePicker servicepicker.ServicePicker
-
-	cluster         *config.Cluster
-	selectedStack   *types.Stack
-	selectedService *types.Service
+	// Container session
+	containerView *ContainerView
+	containerConn core.ContainerConnection
 }
 
-func NewApp(conf config.Config, conn *connector.Connector) *App {
-	return &App{
-		conn:        conn,
+var _ tea.Model = Model{}
+
+func New(conf config.Config) Model {
+	clusterInfo := ClusterInfo{
+		Cluster:  models.Cluster{},
+		Status:   Disconnected,
+		NodeInfo: models.NodeInfo{},
+	}
+	if conf.InitialCluster != "" {
+		initialCluster := conf.Clusters[conf.InitialCluster]
+		clusterInfo.Cluster = initialCluster
+	}
+
+	// Initialize keys first so we can pass the table keymap
+	keys := DefaultAppKeyMap()
+
+	return Model{
 		conf:        conf,
-		viewState:   ViewStackPicker,
-		stackPicker: stackpicker.NewStackPicker([]types.Stack{}),
+		state:       Initializing,
+		clusterInfo: clusterInfo,
+		table:       newTable(keys.Table),
+		keys:        keys,
+		help:        help.New(),
 	}
 }
 
-func (a App) Init() tea.Cmd {
-	cluster := func() config.Cluster {
-		// Pick first cluster
-		for _, v := range a.conf.Clusters {
-			return v
-		}
-		return config.Cluster{}
-	}()
-	return commands.ConnectToClusterCommand(context.Background(), a.conn, cluster)
+func (m Model) Close() error {
+	// Clean up container connection if active
+	if m.containerView != nil {
+		m.containerView.RestoreTerminal()
+	}
+	if m.containerConn != nil {
+		m.containerConn.Close()
+	}
+	if m.browser != nil {
+		return m.browser.Close()
+	}
+	return nil
 }
 
-func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+// Init implements tea.Model.
+func (m Model) Init() tea.Cmd {
+	m.clusterInfo.Status = Connecting
+	return commands.ConnectToCluster(m.clusterInfo.Cluster)
+}
+
+// Update implements tea.Model.
+func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	var cmd tea.Cmd
+
 	switch msg := msg.(type) {
-	case tea.KeyMsg:
-		switch a.viewState {
-		case ViewServices:
-			switch msg.String() {
-			case "esc", "backspace":
-				a.viewState = ViewStackPicker
-				a.selectedStack = nil
-				return a, nil
-			case "ctrl+c", "q":
-				return a, tea.Quit
+	case tea.WindowSizeMsg:
+		m.width = msg.Width
+		m.height = msg.Height
+
+		// If we're in container mode, pass resize to container view
+		if m.state == ContainerAttached && m.containerView != nil {
+			*m.containerView, cmd = m.containerView.Update(msg)
+			return m, cmd
+		}
+
+		m.table.SetWidth(m.tableWidth())
+		m.table.SetHeight(m.tableHeight())
+
+	case commands.ClusterConnected:
+		m.browser = msg.Browser
+		m.clusterInfo = ClusterInfo{
+			Cluster:  msg.Cluster,
+			NodeInfo: msg.Info,
+			Status:   Connected,
+		}
+		return m, commands.ListStacks(m.browser)
+
+	case commands.StacksUpdated:
+		m.state = StacksList
+		m.stacks = msg.Stacks
+		rows := make([]table.Row, len(msg.Stacks))
+		for i, stack := range msg.Stacks {
+			rows[i] = []string{stack.Name}
+		}
+		m.table.SetColumns([]table.Column{{Title: "Name", Width: m.table.Width()}})
+		m.table.SetRows(rows)
+		m.table.SetCursor(0) // Reset cursor to first item
+		return m, nil
+
+	case commands.ServicesUpdated:
+		m.state = ServicesList
+		m.services = msg.Services
+		m.selectedStack = msg.Stack
+		rows := make([]table.Row, len(msg.Services))
+		for i, service := range msg.Services {
+			rows[i] = []string{
+				service.ID,
+				service.Name,
+				fmt.Sprintf("%d/%d", service.RunningTasks, service.DesiredTasks),
 			}
 		}
-	case list.SelectedMsg[types.Stack]:
-		a.selectedStack = &msg.Item
-		a.viewState = ViewServices
-		a.servicePicker = servicepicker.New(a.selectedStack.Services)
-		return a, nil
-	case list.SelectedMsg[types.Service]:
-		a.selectedService = &msg.Item
-		// TODO: Generate a command to connect to the one running
-		// container of the service
-		// The flow is the command should connect, and the msg must contain the
-		// I/O elements to communicate with the container (stdin, stdout, stderr)
-		return a, commands.ConnectToServiceCommand(context.Background(), a.conn, *a.cluster, *a.selectedService)
-	case commands.ConnectedToClusterMsg:
-		// Update the stackpicker with new stacks
-		a.stackPicker = stackpicker.NewStackPicker(msg.Stacks)
-		a.cluster = &msg.Cluster
-		return a, nil
-	case commands.ConnectionErrorMsg:
-		log.Printf("Error connecting to cluster %+v: %v\n", msg.Cluster, msg.Err)
+		// Calculate column widths based on table width
+		tableWidth := m.table.Width()
+		idWidth := 20
+		replicasWidth := 12
+		nameWidth := tableWidth - idWidth - replicasWidth - 4 // Account for borders
+
+		m.table.SetColumns([]table.Column{
+			{Title: "ID", Width: idWidth},
+			{Title: "Name", Width: nameWidth},
+			{Title: "Replicas", Width: replicasWidth},
+		})
+		m.table.SetRows(rows)
+		m.table.SetCursor(0) // Reset cursor to first item
+		return m, nil
+	case commands.ClusterConnectionFailed:
+		m.clusterInfo.Err = msg.Err
+		m.clusterInfo.Status = Disconnected
+		return m, nil
+
+	case commands.ContainerAttachedMsg:
+		// Successfully attached to container
+		m.state = ContainerAttached
+		m.containerConn = msg.Conn
+		view := NewContainerView(msg.Conn)
+		m.containerView = &view
+		return m, m.containerView.Init()
+
+	case ExitContainerMsg:
+		// Clean exit from container
+		m.state = ServicesList
+		m.containerConn.Close()
+		m.containerView = nil
+		m.containerConn = nil
+		return m, nil
+
+	case tea.KeyMsg:
+		// If we're in container mode, pass all keys to the container view
+		if m.state == ContainerAttached && m.containerView != nil {
+			*m.containerView, cmd = m.containerView.Update(msg)
+			return m, cmd
+		}
+
+		switch {
+		case key.Matches(msg, m.keys.Help):
+			m.help.ShowAll = !m.help.ShowAll
+			m.table.SetHeight(m.tableHeight())
+			return m, nil
+
+		case key.Matches(msg, m.keys.Quit):
+			return m, tea.Quit
+
+		case key.Matches(msg, m.keys.Refresh):
+			switch m.state {
+			case StacksList:
+				if m.browser != nil {
+					return m, commands.ListStacks(m.browser)
+				}
+			case ServicesList:
+				if m.browser != nil && m.selectedStack.Name != "" {
+					return m, commands.ListServices(m.browser, m.selectedStack)
+				}
+			}
+			return m, nil
+
+		case key.Matches(msg, m.keys.Enter):
+			switch m.state {
+			case StacksList:
+				// Get selected stack and navigate to services
+				cursor := m.table.Cursor()
+				if cursor >= 0 && cursor < len(m.stacks) && m.browser != nil {
+					selectedStack := m.stacks[cursor]
+					return m, commands.ListServices(m.browser, selectedStack)
+				}
+			case ServicesList:
+				// TODO: Handle service selection to show tasks
+				// This will be implemented when you add task list functionality
+			}
+			return m, nil
+
+		case key.Matches(msg, m.keys.Back):
+			switch m.state {
+			case ServicesList:
+				// Go back to stacks list
+				m.state = StacksList
+				rows := make([]table.Row, len(m.stacks))
+				for i, stack := range m.stacks {
+					rows[i] = []string{stack.Name}
+				}
+				m.table = newTable(m.keys.Table)
+				m.table.SetHeight(m.tableHeight())
+				m.table.SetColumns([]table.Column{{Title: "Name", Width: m.table.Width()}})
+				m.table.SetRows(rows)
+				// Try to restore cursor position to the selected stack
+				for i, stack := range m.stacks {
+					if stack.Name == m.selectedStack.Name {
+						m.table.SetCursor(i)
+						break
+					}
+				}
+				return m, nil
+			case TaskList:
+				// TODO: Go back to services list
+				// This will be implemented when you add task list functionality
+			}
+			return m, nil
+
+		case key.Matches(msg, m.keys.Connect):
+			// Connect to container - only available in ServicesList
+			if m.state == ServicesList {
+				cursor := m.table.Cursor()
+				if cursor >= 0 && cursor < len(m.services) && m.browser != nil {
+					selectedService := m.services[cursor]
+					return m, commands.AttachToService(m.browser, selectedService)
+				}
+			}
+			return m, nil
+
+		case key.Matches(msg, m.keys.Filter):
+			// TODO: Implement filtering
+		}
 	}
 
-	// Delegate to the appropriate model based on view state
-	switch a.viewState {
-	case ViewStackPicker:
-		updatedPicker, cmd := a.stackPicker.Update(msg)
-		a.stackPicker = updatedPicker.(stackpicker.StackPicker)
-		return a, cmd
-	case ViewServices:
-		updatedPicker, cmd := a.servicePicker.Update(msg)
-		a.servicePicker = updatedPicker.(servicepicker.ServicePicker)
-		return a, cmd
-	}
-
-	return a, nil
+	m.table, cmd = m.table.Update(msg)
+	return m, cmd
 }
 
-func (a App) View() string {
-	var sb strings.Builder
-	switch a.viewState {
-	case ViewStackPicker:
-		sb.WriteString(a.stackPicker.View() + "\n")
-		sb.WriteString(styles.HelpTextStyle.Render("\n← Backspace/ESC: Back to stack selection • ↑/↓ or j/k: Navigate • Enter: Select • q: Quit"))
-	case ViewServices:
-		sb.WriteString(a.servicePicker.View() + "\n")
-		sb.WriteString(styles.HelpTextStyle.Render("\n← Backspace/ESC: Back to stack selection • ↑/↓ or j/k: Navigate • Enter: Select • q: Quit"))
-	default:
-		sb.WriteString("Unknown view state")
+// View implements tea.Model.
+func (m Model) View() string {
+	// If we're in container mode, show the container view
+	if m.state == ContainerAttached && m.containerView != nil {
+		return m.containerView.View()
 	}
-	return sb.String()
+
+	header := ClusterInfoView(m.clusterInfo)
+
+	// Create contextual keymap for help display
+	contextualKeys := NewContextualKeyMap(&m.keys, m.state)
+	helpView := m.help.View(contextualKeys)
+
+	return lipgloss.JoinVertical(
+		lipgloss.Left,
+		header,
+		TableStyle.Render(m.table.View()),
+		helpView,
+	)
+}
+
+func (m Model) renderAppHeader() string {
+	return AppHeaderStyle.Render(ClusterInfoView(m.clusterInfo))
+}
+
+func (m Model) tableHeight() int {
+	// Calculate available height by subtracting header and help text
+	headerHeight := lipgloss.Height(m.renderAppHeader())
+	contextualKeys := NewContextualKeyMap(&m.keys, m.state)
+	helpHeight := lipgloss.Height(m.help.View(contextualKeys))
+	padding := 4 // Some padding for borders and spacing
+
+	availableHeight := m.height - headerHeight - helpHeight - padding
+
+	// Ensure we don't return negative height
+	if availableHeight < 1 {
+		return 1
+	}
+	return availableHeight
+}
+
+func (m Model) tableWidth() int {
+	return m.width - 4
+}
+
+func newTable(keyMap table.KeyMap) table.Model {
+	t := table.New(
+		table.WithFocused(true),
+		table.WithKeyMap(keyMap),
+	)
+	s := table.DefaultStyles()
+	s.Header = s.Header.
+		BorderStyle(lipgloss.NormalBorder()).
+		BorderForeground(lipgloss.Color("240")).
+		BorderBottom(true).
+		Bold(false)
+	s.Selected = s.Selected.
+		Foreground(lipgloss.Color("229")).
+		Background(lipgloss.Color("57")).
+		Bold(false)
+	t.SetStyles(s)
+	return t
 }
