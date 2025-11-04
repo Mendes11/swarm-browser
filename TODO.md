@@ -3,20 +3,23 @@ First version is a simple TUI that allows you to drill-down stacks -> services -
 
 The user must be able to:
  * Go back
- * Drill Down into a Stack, displaying all services
- * [A]ttach to all containers of a service
- * [E]nter into a single container of a service (picked by first successful connection)
-   * Prompt the user which bash command to execute (default to bash)
+ * Drill Down into a Stack, displaying all services, and tasks
+ * [A]ttach to a containers of a service
+ * [A]ttach to a container of a task
+ * Filter Stacks and Services by name
 
 ## Tasks
 
-- [ ] Add attach option to Service level
-    - [ ] Keybind: a
-    - [ ] Attach to ALL running containers, and print into a dedicated container
+[ ] Custom hooks for switching cluster -- Support custom commands when switching to a cluster (ie: switch vpn)
 
-- [ ] Add exec option to Service Level
-    - [ ] Asks for default bash command (defaults to bash)
-    - [ ] Create new Exec and attach. This first version should takeover the entire TUI (terminal RawMode)
+[ ] What's the ideal way to distribute clusters.yml? Have it stored in an S3 bucket and just download from it as part of the install script?
 
-- [ ] Add Container Listing
-- [ ] Add Attach and Exec to it
+[ ] How do I distribute this?
+
+[ ] Create a CLI on the core models
+
+[ ] Create a CLI to attach to a service
+
+[ ] Implement switch between clusters
+
+[ ] Come-up with a name

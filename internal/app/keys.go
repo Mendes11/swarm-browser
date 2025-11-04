@@ -17,6 +17,7 @@ type AppKeyMap struct {
 	Connect key.Binding
 	Filter  key.Binding
 	Enter   key.Binding
+	Cancel  key.Binding
 
 	// Application
 	Help key.Binding
@@ -31,8 +32,12 @@ func DefaultAppKeyMap() AppKeyMap {
 
 		// App-specific actions
 		Back: key.NewBinding(
-			key.WithKeys("esc", "backspace"),
-			key.WithHelp("esc", "back"),
+			key.WithKeys("backspace"),
+			key.WithHelp("backspace", "back"),
+		),
+		Cancel: key.NewBinding(
+			key.WithKeys("esc"),
+			key.WithHelp("esc", "cancel"),
 		),
 		Refresh: key.NewBinding(
 			key.WithKeys("r"),
@@ -47,8 +52,8 @@ func DefaultAppKeyMap() AppKeyMap {
 			key.WithHelp("enter", "select"),
 		),
 		Connect: key.NewBinding(
-			key.WithKeys("c"),
-			key.WithHelp("c", "connect"),
+			key.WithKeys("a"),
+			key.WithHelp("a", "connect"),
 		),
 		Filter: key.NewBinding(
 			key.WithKeys("/"),

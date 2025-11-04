@@ -132,8 +132,10 @@ func (s *SwarmConnector) ListServices(ctx context.Context, stack models.Stack) (
 			ID:           service.ID,
 			Name:         service.Spec.Name,
 			RunningTasks: service.ServiceStatus.RunningTasks,
-			DesiredTasks: *service.Spec.Mode.Replicated.Replicas,
 			Stack:        stack,
+		}
+		if service.Spec.Mode.Replicated != nil {
+			services[i].DesiredTasks = *service.Spec.Mode.Replicated.Replicas
 		}
 	}
 	return services, nil
@@ -149,10 +151,14 @@ func (s *SwarmConnector) ListStacks(ctx context.Context) ([]models.Stack, error)
 	if err != nil {
 		return nil, errors.Wrap(err, "connector.SwarmConnector#ListStacks: ServiceList")
 	}
+	stacksMap := make(map[string]struct{})
 	stacks := make([]models.Stack, 0)
 	for _, service := range services {
 		if stackName, exists := service.Spec.Labels["com.docker.stack.namespace"]; exists {
-			stacks = append(stacks, models.Stack{Name: stackName})
+			if _, stackExist := stacksMap[stackName]; !stackExist {
+				stacks = append(stacks, models.Stack{Name: stackName})
+				stacksMap[stackName] = struct{}{}
+			}
 		}
 	}
 	return slices.Compact(stacks), nil

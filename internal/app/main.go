@@ -1,11 +1,12 @@
 package app
 
 import (
-	"fmt"
+	"strings"
 
 	"github.com/charmbracelet/bubbles/help"
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/table"
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/mendes11/swarm-browser/internal/app/commands"
@@ -25,10 +26,16 @@ type Model struct {
 	width       int
 	height      int
 
+	// Filter state
+	filterActive bool
+	filterInput  textinput.Model
+
 	// Navigation state
-	stacks        []models.Stack
-	selectedStack models.Stack
-	services      []models.Service
+	stacks          []models.Stack
+	selectedStack   *models.Stack
+	services        []models.Service
+	selectedService *models.Service
+	tasks           []models.Task
 
 	// Container session
 	containerView *ContainerView
@@ -51,6 +58,13 @@ func New(conf config.Config) Model {
 	// Initialize keys first so we can pass the table keymap
 	keys := DefaultAppKeyMap()
 
+	// Initialize filter input
+	filterInput := textinput.New()
+	filterInput.Placeholder = "Type to filter..."
+	filterInput.Prompt = "/ "
+	filterInput.CharLimit = 100
+	filterInput.Width = 50
+
 	return Model{
 		conf:        conf,
 		state:       Initializing,
@@ -58,6 +72,7 @@ func New(conf config.Config) Model {
 		table:       newTable(keys.Table),
 		keys:        keys,
 		help:        help.New(),
+		filterInput: filterInput,
 	}
 }
 
@@ -99,6 +114,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.table.SetWidth(m.tableWidth())
 		m.table.SetHeight(m.tableHeight())
 
+		// Update filter input width to match table width
+		m.filterInput.Width = m.tableWidth()
+
 	case commands.ClusterConnected:
 		m.browser = msg.Browser
 		m.clusterInfo = ClusterInfo{
@@ -110,42 +128,28 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case commands.StacksUpdated:
 		m.state = StacksList
-		m.stacks = msg.Stacks
-		rows := make([]table.Row, len(msg.Stacks))
-		for i, stack := range msg.Stacks {
-			rows[i] = []string{stack.Name}
+
+		var selectedStack *models.Stack
+		if m.state == StacksList && m.table.Cursor() < len(m.stacks) {
+			selectedStack = &m.stacks[m.table.Cursor()]
 		}
-		m.table.SetColumns([]table.Column{{Title: "Name", Width: m.table.Width()}})
-		m.table.SetRows(rows)
-		m.table.SetCursor(0) // Reset cursor to first item
+		m.stacks = msg.Stacks
+		m.showStacksTable(msg.Stacks, selectedStack)
 		return m, nil
 
 	case commands.ServicesUpdated:
 		m.state = ServicesList
 		m.services = msg.Services
-		m.selectedStack = msg.Stack
-		rows := make([]table.Row, len(msg.Services))
-		for i, service := range msg.Services {
-			rows[i] = []string{
-				service.ID,
-				service.Name,
-				fmt.Sprintf("%d/%d", service.RunningTasks, service.DesiredTasks),
-			}
-		}
-		// Calculate column widths based on table width
-		tableWidth := m.table.Width()
-		idWidth := 20
-		replicasWidth := 12
-		nameWidth := tableWidth - idWidth - replicasWidth - 4 // Account for borders
-
-		m.table.SetColumns([]table.Column{
-			{Title: "ID", Width: idWidth},
-			{Title: "Name", Width: nameWidth},
-			{Title: "Replicas", Width: replicasWidth},
-		})
-		m.table.SetRows(rows)
-		m.table.SetCursor(0) // Reset cursor to first item
+		m.selectedStack = &msg.Stack
+		m.showServicesTable(msg.Services, nil)
 		return m, nil
+	case commands.TasksUpdated:
+		m.state = TaskList
+		m.tasks = msg.Tasks
+		m.selectedService = &msg.Service
+		m.showTasksTable(msg.Tasks, nil)
+		return m, nil
+
 	case commands.ClusterConnectionFailed:
 		m.clusterInfo.Err = msg.Err
 		m.clusterInfo.Status = Disconnected
@@ -174,6 +178,34 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 
+		// Handle filter mode
+		if m.filterActive {
+			switch {
+			case key.Matches(msg, m.keys.Enter):
+				// Exit filter mode and keep filter applied
+				m.filterActive = false
+				m.filterInput.Blur()
+				m.table.Focus()
+				m.table.SetHeight(m.tableHeight())
+				return m, nil
+
+			case key.Matches(msg, m.keys.Cancel):
+				// Exit filter mode and clear the filter
+				m.clearFilter()
+				m.table.Focus()
+				m.table.SetHeight(m.tableHeight())
+				// Refresh to show unfiltered data
+				m.refreshCurrentView()
+				return m, nil
+
+			default:
+				// Pass key to text input and apply filter as user types
+				m.filterInput, cmd = m.filterInput.Update(msg)
+				m.refreshCurrentView()
+				return m, cmd
+			}
+		}
+
 		switch {
 		case key.Matches(msg, m.keys.Help):
 			m.help.ShowAll = !m.help.ShowAll
@@ -190,8 +222,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, commands.ListStacks(m.browser)
 				}
 			case ServicesList:
-				if m.browser != nil && m.selectedStack.Name != "" {
-					return m, commands.ListServices(m.browser, m.selectedStack)
+				if m.browser != nil && m.selectedStack != nil {
+					return m, commands.ListServices(m.browser, *m.selectedStack)
+				}
+			case TaskList:
+				if m.browser != nil && m.selectedService != nil {
+					return m, commands.ListTasks(m.browser, *m.selectedService)
 				}
 			}
 			return m, nil
@@ -203,11 +239,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				cursor := m.table.Cursor()
 				if cursor >= 0 && cursor < len(m.stacks) && m.browser != nil {
 					selectedStack := m.stacks[cursor]
+					m.clearFilter()
 					return m, commands.ListServices(m.browser, selectedStack)
 				}
 			case ServicesList:
-				// TODO: Handle service selection to show tasks
-				// This will be implemented when you add task list functionality
+				cursor := m.table.Cursor()
+				if cursor >= 0 && cursor < len(m.services) && m.browser != nil {
+					selectedService := m.services[cursor]
+					m.clearFilter()
+					return m, commands.ListTasks(m.browser, selectedService)
+				}
 			}
 			return m, nil
 
@@ -216,41 +257,43 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case ServicesList:
 				// Go back to stacks list
 				m.state = StacksList
-				rows := make([]table.Row, len(m.stacks))
-				for i, stack := range m.stacks {
-					rows[i] = []string{stack.Name}
-				}
-				m.table = newTable(m.keys.Table)
-				m.table.SetHeight(m.tableHeight())
-				m.table.SetColumns([]table.Column{{Title: "Name", Width: m.table.Width()}})
-				m.table.SetRows(rows)
-				// Try to restore cursor position to the selected stack
-				for i, stack := range m.stacks {
-					if stack.Name == m.selectedStack.Name {
-						m.table.SetCursor(i)
-						break
-					}
-				}
-				return m, nil
+				m.clearFilter()
+				m.showStacksTable(m.stacks, m.selectedStack)
+				m.selectedStack = nil
+				return m, commands.ListStacks(m.browser)
 			case TaskList:
-				// TODO: Go back to services list
-				// This will be implemented when you add task list functionality
+				m.state = ServicesList
+				m.clearFilter()
+				m.showServicesTable(m.services, m.selectedService)
+				m.selectedService = nil
 			}
-			return m, nil
+			return m, commands.ListServices(m.browser, *m.selectedStack)
 
 		case key.Matches(msg, m.keys.Connect):
-			// Connect to container - only available in ServicesList
-			if m.state == ServicesList {
+			// Connect to container
+			switch m.state {
+			case ServicesList:
 				cursor := m.table.Cursor()
 				if cursor >= 0 && cursor < len(m.services) && m.browser != nil {
 					selectedService := m.services[cursor]
 					return m, commands.AttachToService(m.browser, selectedService)
 				}
+			case TaskList:
+				cursor := m.table.Cursor()
+				if cursor >= 0 && cursor < len(m.services) && m.browser != nil {
+					selectedTask := m.tasks[cursor]
+					return m, commands.AttachToTask(m.browser, selectedTask)
+				}
 			}
 			return m, nil
 
 		case key.Matches(msg, m.keys.Filter):
-			// TODO: Implement filtering
+			// Enter filter mode
+			m.filterActive = true
+			m.filterInput.Focus()
+			m.table.Blur()
+			m.table.SetHeight(m.tableHeight())
+			return m, textinput.Blink
 		}
 	}
 	if m.containerView != nil {
@@ -274,12 +317,25 @@ func (m Model) View() string {
 	contextualKeys := NewContextualKeyMap(&m.keys, m.state)
 	helpView := m.help.View(contextualKeys)
 
-	return lipgloss.JoinVertical(
-		lipgloss.Left,
+	// Build filter view
+	filterView := ""
+	if m.filterActive || m.filterInput.Value() != "" {
+		filterView = m.filterInput.View()
+	}
+
+	// Join all sections vertically
+	sections := []string{
 		header,
 		TableStyle.Render(m.table.View()),
-		helpView,
-	)
+	}
+
+	if filterView != "" {
+		sections = append(sections, filterView)
+	}
+
+	sections = append(sections, helpView)
+
+	return lipgloss.JoinVertical(lipgloss.Left, sections...)
 }
 
 func (m Model) renderAppHeader() string {
@@ -291,9 +347,16 @@ func (m Model) tableHeight() int {
 	headerHeight := lipgloss.Height(m.renderAppHeader())
 	contextualKeys := NewContextualKeyMap(&m.keys, m.state)
 	helpHeight := lipgloss.Height(m.help.View(contextualKeys))
+
+	// Account for filter input if active or has text
+	filterHeight := 0
+	if m.filterActive || m.filterInput.Value() != "" {
+		filterHeight = lipgloss.Height(m.filterInput.View())
+	}
+
 	padding := 4 // Some padding for borders and spacing
 
-	availableHeight := m.height - headerHeight - helpHeight - padding
+	availableHeight := m.height - headerHeight - helpHeight - filterHeight - padding
 
 	// Ensure we don't return negative height
 	if availableHeight < 1 {
@@ -306,21 +369,81 @@ func (m Model) tableWidth() int {
 	return m.width - 4
 }
 
-func newTable(keyMap table.KeyMap) table.Model {
-	t := table.New(
-		table.WithFocused(true),
-		table.WithKeyMap(keyMap),
-	)
-	s := table.DefaultStyles()
-	s.Header = s.Header.
-		BorderStyle(lipgloss.NormalBorder()).
-		BorderForeground(lipgloss.Color("240")).
-		BorderBottom(true).
-		Bold(false)
-	s.Selected = s.Selected.
-		Foreground(lipgloss.Color("229")).
-		Background(lipgloss.Color("57")).
-		Bold(false)
-	t.SetStyles(s)
-	return t
+// refreshCurrentView refreshes the current view with the filter applied
+func (m *Model) refreshCurrentView() {
+	filterText := m.filterInput.Value()
+
+	switch m.state {
+	case StacksList:
+		stacks := m.stacks
+		if filterText != "" {
+			stacks = m.filterStacks(filterText)
+		}
+		m.showStacksTable(stacks, m.selectedStack)
+	case ServicesList:
+		services := m.services
+		if filterText != "" {
+			services = m.filterServices(filterText)
+		}
+		m.showServicesTable(services, m.selectedService)
+	case TaskList:
+		tasks := m.tasks
+		if filterText != "" {
+			tasks = m.filterTasks(filterText)
+		}
+		m.showTasksTable(tasks, nil)
+	}
+}
+
+// filterStacks filters stacks by name (case-insensitive)
+func (m *Model) filterStacks(filterText string) []models.Stack {
+	filterLower := strings.ToLower(filterText)
+	filtered := make([]models.Stack, 0)
+
+	for _, stack := range m.stacks {
+		if strings.Contains(strings.ToLower(stack.Name), filterLower) {
+			filtered = append(filtered, stack)
+		}
+	}
+
+	return filtered
+}
+
+// filterServices filters services by name or ID (case-insensitive)
+func (m *Model) filterServices(filterText string) []models.Service {
+	filterLower := strings.ToLower(filterText)
+	filtered := make([]models.Service, 0)
+
+	for _, service := range m.services {
+		if strings.Contains(strings.ToLower(service.Name), filterLower) ||
+			strings.Contains(strings.ToLower(service.ID), filterLower) {
+			filtered = append(filtered, service)
+		}
+	}
+
+	return filtered
+}
+
+// filterTasks filters tasks by ID, container ID, status, or node (case-insensitive)
+func (m *Model) filterTasks(filterText string) []models.Task {
+	filterLower := strings.ToLower(filterText)
+	filtered := make([]models.Task, 0)
+
+	for _, task := range m.tasks {
+		if strings.Contains(strings.ToLower(task.TaskID), filterLower) ||
+			strings.Contains(strings.ToLower(task.ContainerID), filterLower) ||
+			strings.Contains(strings.ToLower(string(task.Status)), filterLower) ||
+			strings.Contains(strings.ToLower(task.Node.Host), filterLower) {
+			filtered = append(filtered, task)
+		}
+	}
+
+	return filtered
+}
+
+// clearFilter clears the filter input and resets filter state
+func (m *Model) clearFilter() {
+	m.filterActive = false
+	m.filterInput.SetValue("")
+	m.filterInput.Blur()
 }

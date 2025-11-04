@@ -15,7 +15,8 @@ import (
 
 // ContainerAttachedMsg is sent when starting a container attachment
 type ContainerAttachedMsg struct {
-	Service models.Service
+	Service *models.Service
+	Task    *models.Task
 	Conn    core.ContainerConnection
 }
 
@@ -44,8 +45,27 @@ func AttachToService(browser core.ClusterBrowser, service models.Service) tea.Cm
 		}
 		log.Printf("Attached to service %s\n", service.Name)
 		return ContainerAttachedMsg{
-			Service: service,
+			Service: &service,
 			Conn:    conn,
+		}
+	}
+}
+
+func AttachToTask(browser core.ClusterBrowser, task models.Task) tea.Cmd {
+	return func() tea.Msg {
+		log.Printf("Attaching to task %s\n", task.TaskID)
+		conn, err := browser.AttachToTask(context.Background(), task, []string{"/bin/bash"})
+		if err != nil {
+			conn, err = browser.AttachToTask(context.Background(), task, []string{"/bin/sh"})
+			if err != nil {
+				log.Println(fmt.Errorf("failed to attach to service: %w", err))
+				return ContainerDetachedMsg{Err: err}
+			}
+		}
+		log.Printf("Attached to Task %s\n", task.TaskID)
+		return ContainerAttachedMsg{
+			Task: &task,
+			Conn: conn,
 		}
 	}
 }
