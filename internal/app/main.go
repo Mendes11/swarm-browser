@@ -159,7 +159,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.containerView = &view
 		return m, m.containerView.Init()
 
-	case ExitContainerMsg:
+	case ExitContainerViewMsg:
 		// Clean exit from container
 		m.state = ServicesList
 		m.containerConn.Close()
@@ -253,7 +253,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// TODO: Implement filtering
 		}
 	}
-
+	if m.containerView != nil {
+		*m.containerView, cmd = m.containerView.Update(msg)
+		return m, cmd
+	}
 	m.table, cmd = m.table.Update(msg)
 	return m, cmd
 }

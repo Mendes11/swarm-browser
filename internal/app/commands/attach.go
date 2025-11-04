@@ -19,14 +19,14 @@ type ContainerAttachedMsg struct {
 	Conn    core.ContainerConnection
 }
 
+// ContainerOutputMsg sends container output to the UI
+type ContainerOutputMsg struct {
+	Data []byte
+}
+
 // ContainerDetachedMsg is sent when the container session ends
 type ContainerDetachedMsg struct {
 	Err error
-}
-
-// ListenToAttachmentFinishedMsg is sent when the locking command that proxies
-// stdin and stdout to the connection is closed.
-type ListenToAttachmentFinishedMsg struct {
 }
 
 // AttachToService creates a command to attach to a service's container
@@ -42,7 +42,7 @@ func AttachToService(browser core.ClusterBrowser, service models.Service) tea.Cm
 				return ContainerDetachedMsg{Err: fmt.Errorf("failed to attach to service: %w", err)}
 			}
 		}
-
+		log.Printf("Attached to service %s\n", service.Name)
 		return ContainerAttachedMsg{
 			Service: service,
 			Conn:    conn,
@@ -50,21 +50,29 @@ func AttachToService(browser core.ClusterBrowser, service models.Service) tea.Cm
 	}
 }
 
-// ListenToAttachment will proxy Stdin to the attachment's Stdin, and its Stdout to the program's stdout
-// this should be called as soon as the program receives ContainerAttachedMsg.
-// Once the pipe is closed with an io.EOF message, this command returns ListenToAttachmentFinished.
-func ListenToAttachment(conn core.ContainerConnection, stdin, stdout *os.File) tea.Cmd {
+// ReadContainerOutput continuously reads from the container connection
+func ReadContainerOutput(conn core.ContainerConnection) tea.Cmd {
 	return func() tea.Msg {
-		log.Println("Listening to container Connection...")
-		go io.Copy(conn.Conn(), stdin)
-		_, err := io.Copy(stdout, conn.Conn())
-		if err != nil && err != io.EOF {
-			log.Printf("commands.ListenToAttachment: Copy to stdout failed: %v\n", err)
-			return ListenToAttachmentFinishedMsg{}
+		buffer := make([]byte, 4096)
+		n, err := conn.Conn().Read(buffer)
+		if err != nil {
+			if err == io.EOF {
+				return ContainerDetachedMsg{Err: nil}
+			}
+			return ContainerDetachedMsg{Err: err}
 		}
+		return ContainerOutputMsg{Data: buffer[:n]}
+	}
+}
 
-		log.Println("Finished listening to container connection.")
-		return ListenToAttachmentFinishedMsg{}
+// SendToContainer sends input to the container
+func SendToContainer(conn core.ContainerConnection, data []byte) tea.Cmd {
+	return func() tea.Msg {
+		_, err := conn.Conn().Write(data)
+		if err != nil {
+			return ContainerDetachedMsg{Err: err}
+		}
+		return nil
 	}
 }
 

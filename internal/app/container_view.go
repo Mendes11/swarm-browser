@@ -11,17 +11,31 @@ import (
 	"golang.org/x/term"
 )
 
+// ExitContainerMsg is sent when exiting the container view
+type ExitContainerViewMsg struct {
+	Err error
+}
+
+// ExitContainerView returns a command that signals to exit the container view
+func ExitContainerView(err error) tea.Cmd {
+	return func() tea.Msg {
+		return ExitContainerViewMsg{Err: err}
+	}
+}
+
 // ContainerView handles the interactive container session
 type ContainerView struct {
 	conn         core.ContainerConnection
 	rawMode      bool
 	oldTermState *term.State
+	err          error
 }
 
 // NewContainerView creates a new container view
 func NewContainerView(conn core.ContainerConnection) ContainerView {
 	return ContainerView{
-		conn: conn,
+		conn:    conn,
+		rawMode: false,
 	}
 }
 
@@ -29,7 +43,7 @@ func NewContainerView(conn core.ContainerConnection) ContainerView {
 func (v ContainerView) Init() tea.Cmd {
 	return tea.Batch(
 		commands.EnterRawMode(),
-		commands.ResizeContainerTTY(v.conn),
+		commands.ReadContainerOutput(v.conn),
 	)
 }
 
@@ -47,30 +61,53 @@ func (v ContainerView) Update(msg tea.Msg) (ContainerView, tea.Cmd) {
 	case commands.EnteredRawModeMsg:
 		v.rawMode = true
 		v.oldTermState = msg.TerminalState
-		return v, commands.ListenToAttachment(v.conn, os.Stdin, os.Stdout)
+
+		return v, tea.Batch(tea.ExitAltScreen, tea.ShowCursor)
 
 	case commands.EnterRawModeErrMsg:
-		return v, func() tea.Msg {
-			return ExitContainerMsg{}
-		}
-	case commands.ListenToAttachmentFinishedMsg:
-		v.RestoreTerminal()
-		return v, func() tea.Msg {
-			return ExitContainerMsg{}
-		}
+		return v, ExitContainerView(nil)
 
-	case tea.WindowSizeMsg:
-		return v, commands.ResizeContainerTTY(v.conn)
+	case commands.ContainerOutputMsg:
+		// Display container output directly
+		os.Stdout.Write(msg.Data)
+		// Continue reading
+		return v, commands.ReadContainerOutput(v.conn)
 
 	case commands.ContainerDetachedMsg:
 		v.RestoreTerminal()
+		v.err = msg.Err
 		if v.conn != nil {
 			v.conn.Close()
 		}
 		// Return a command to go back to the previous view
-		return v, func() tea.Msg {
-			return ExitContainerMsg{}
+		return v, tea.Batch(tea.EnterAltScreen, tea.HideCursor, ExitContainerView(msg.Err))
+
+	case tea.KeyMsg:
+		// return v, nil
+		// Convert the Bubbletea key message to actual terminal bytes
+		data := KeyToBytes(msg)
+
+		// Check if it's the detach key (Ctrl+\) - returns nil to signal detachment
+		if data == nil && (msg.Type == tea.KeyCtrlBackslash || msg.String() == "ctrl+\\") {
+			v.RestoreTerminal()
+			if v.conn != nil {
+				v.conn.Close()
+			}
+			return v, ExitContainerView(nil)
 		}
+
+		// Send the converted bytes to the container
+		if len(data) > 0 {
+			_, err := v.conn.Conn().Write(data)
+			if err != nil {
+				// Connection error - detach and report error
+				v.RestoreTerminal()
+				return v, func() tea.Msg {
+					return commands.ContainerDetachedMsg{Err: err}
+				}
+			}
+		}
+		return v, nil
 	}
 
 	return v, nil
@@ -78,17 +115,20 @@ func (v ContainerView) Update(msg tea.Msg) (ContainerView, tea.Cmd) {
 
 // View renders the container view
 func (v ContainerView) View() string {
+	if v.err != nil {
+		return lipgloss.NewStyle().
+			Foreground(lipgloss.Color("196")).
+			Render(fmt.Sprintf("Error: %v\nPress any key to return...", v.err))
+	}
+
 	// In raw mode, we don't render anything through bubbletea
 	// The terminal output is handled directly
 	if v.rawMode {
-		return "Raw Mode: "
+		return "Press ctrl+d or exit the container to return to the view\n"
 	}
 
 	// Show a message before entering raw mode
 	return lipgloss.NewStyle().
 		Padding(1).
-		Render(fmt.Sprintf("Attaching to container %s", v.conn.ContainerID()))
+		Render(fmt.Sprintf("Attaching to %s...", v.conn.ContainerID()))
 }
-
-// ExitContainerMsg is sent when exiting the container view
-type ExitContainerMsg struct{}
