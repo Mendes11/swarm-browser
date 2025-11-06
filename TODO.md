@@ -12,7 +12,13 @@ The user must be able to:
 
 [ ] Custom hooks for switching clusters -- Support custom commands when switching to a cluster (ie: switch vpn)
 
-[ ] Implement switch between clusters
+[ ] Add custom commands selector when attaching. Default to bash
+    - Base commands => Bash: /bin/bash, Shell: /bin/shell
+    - User commands => Rails console: bin/docker-entrypoint bin/rails c
+
+[ ] Windows support: Does the same SSH with tunneling work in it? If so, then it's probably a matter of changing the tmp folder.
+
+[x] Implement switch between clusters
 
 [ ] What's the ideal way to distribute clusters.yml? Have it stored in an S3 bucket and just download from it as part of the install script?
 

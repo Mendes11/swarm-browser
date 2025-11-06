@@ -3,3 +3,5 @@
 tmp/*
 build/*
 clusters.yml
+# Added by goreleaser init:
+dist/
