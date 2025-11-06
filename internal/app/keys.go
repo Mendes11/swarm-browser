@@ -93,6 +93,7 @@ func (k AppKeyMap) ShortHelpForView(viewState ViewState) []key.Binding {
 			k.Table.LineUp,
 			k.Table.LineDown,
 			k.Enter,
+			k.Cluster,
 			k.Refresh,
 			k.Help,
 			k.Quit,
@@ -103,6 +104,7 @@ func (k AppKeyMap) ShortHelpForView(viewState ViewState) []key.Binding {
 			k.Table.LineDown,
 			k.Enter,
 			k.Back,
+			k.Cluster,
 			k.Refresh,
 			k.Help,
 			k.Quit,
@@ -113,7 +115,17 @@ func (k AppKeyMap) ShortHelpForView(viewState ViewState) []key.Binding {
 			k.Table.LineDown,
 			k.Enter,
 			k.Back,
+			k.Cluster,
 			k.Connect,
+			k.Help,
+			k.Quit,
+		}
+	case ClusterSelection:
+		return []key.Binding{
+			k.Table.LineUp,
+			k.Table.LineDown,
+			k.Enter,
+			k.Back,
 			k.Help,
 			k.Quit,
 		}
@@ -163,7 +175,7 @@ func (k AppKeyMap) FullHelpForView(viewState ViewState) [][]key.Binding {
 				k.Table.GotoBottom,
 			},
 			// App actions - no back in stacks list
-			{k.Enter, k.Refresh, k.Connect, k.Filter},
+			{k.Enter, k.Cluster, k.Refresh, k.Connect, k.Filter},
 			// App controls
 			{k.Help, k.Quit},
 		}
@@ -183,7 +195,7 @@ func (k AppKeyMap) FullHelpForView(viewState ViewState) [][]key.Binding {
 				k.Table.GotoBottom,
 			},
 			// App actions - show back but not connect
-			{k.Enter, k.Back, k.Refresh, k.Filter},
+			{k.Enter, k.Back, k.Cluster, k.Refresh, k.Filter},
 			// App controls
 			{k.Help, k.Quit},
 		}
@@ -203,7 +215,27 @@ func (k AppKeyMap) FullHelpForView(viewState ViewState) [][]key.Binding {
 				k.Table.GotoBottom,
 			},
 			// App actions
-			{k.Enter, k.Back, k.Refresh, k.Connect, k.Filter},
+			{k.Enter, k.Back, k.Cluster, k.Refresh, k.Connect, k.Filter},
+			// App controls
+			{k.Help, k.Quit},
+		}
+	case ClusterSelection:
+		// In cluster selection, show enter and back/cancel
+		return [][]key.Binding{
+			// Table navigation
+			{
+				k.Table.LineUp,
+				k.Table.LineDown,
+				k.Table.PageUp,
+				k.Table.PageDown,
+			},
+			// More table navigation
+			{
+				k.Table.GotoTop,
+				k.Table.GotoBottom,
+			},
+			// App actions - just select and cancel
+			{k.Enter, k.Back, k.Cancel},
 			// App controls
 			{k.Help, k.Quit},
 		}
@@ -221,6 +253,8 @@ func (k *AppKeyMap) SetEnterHelpText(viewState ViewState) {
 		k.Enter.SetHelp("enter", "view tasks")
 	case TaskList:
 		k.Enter.SetHelp("enter", "attach to container")
+	case ClusterSelection:
+		k.Enter.SetHelp("enter", "select cluster")
 	default:
 		k.Enter.SetHelp("enter", "select")
 	}

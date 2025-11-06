@@ -37,6 +37,11 @@ type Model struct {
 	selectedService *models.Service
 	tasks           []models.Task
 
+	// Cluster selection state
+	clustersForDisplay []commands.ClusterTableRow
+	previousState      ViewState
+	currentClusterName string
+
 	// Container session
 	containerView *ContainerView
 	containerConn core.ContainerConnection
@@ -66,13 +71,14 @@ func New(conf config.Config) Model {
 	filterInput.Width = 50
 
 	return Model{
-		conf:        conf,
-		state:       Initializing,
-		clusterInfo: clusterInfo,
-		table:       newTable(keys.Table),
-		keys:        keys,
-		help:        help.New(),
-		filterInput: filterInput,
+		conf:               conf,
+		state:              Initializing,
+		clusterInfo:        clusterInfo,
+		table:              newTable(keys.Table),
+		keys:               keys,
+		help:               help.New(),
+		filterInput:        filterInput,
+		currentClusterName: conf.InitialCluster,
 	}
 }
 
@@ -171,6 +177,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.containerConn = nil
 		return m, nil
 
+	case commands.ClustersListed:
+		m.clustersForDisplay = msg.Clusters
+		m.showClustersTable(msg.Clusters, msg.CurrentCluster)
+		return m, nil
+
 	case tea.KeyMsg:
 		// If we're in container mode, pass all keys to the container view
 		if m.state == ContainerAttached && m.containerView != nil {
@@ -234,6 +245,45 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case key.Matches(msg, m.keys.Enter):
 			switch m.state {
+			case ClusterSelection:
+				// Get selected cluster and connect
+				cursor := m.table.Cursor()
+				if cursor >= 0 && cursor < len(m.clustersForDisplay) {
+					selectedCluster := m.clustersForDisplay[cursor]
+					// If it's the same cluster, just go back
+					if selectedCluster.Name == m.currentClusterName {
+						m.state = m.previousState
+						// Restore the appropriate table
+						switch m.previousState {
+						case StacksList:
+							m.showStacksTable(m.stacks, m.selectedStack)
+						case ServicesList:
+							m.showServicesTable(m.services, m.selectedService)
+						case TaskList:
+							m.showTasksTable(m.tasks, nil)
+						}
+						return m, nil
+					}
+
+					// Different cluster - disconnect and reconnect
+					if m.browser != nil {
+						m.browser.Close()
+						m.browser = nil
+					}
+					// Clear navigation state
+					m.stacks = nil
+					m.selectedStack = nil
+					m.services = nil
+					m.selectedService = nil
+					m.tasks = nil
+					// Update current cluster
+					m.currentClusterName = selectedCluster.Name
+					m.clusterInfo.Cluster = m.conf.Clusters[selectedCluster.Name]
+					m.clusterInfo.Status = Connecting
+					m.state = Initializing
+					return m, commands.ConnectToCluster(m.conf.Clusters[selectedCluster.Name])
+				}
+
 			case StacksList:
 				// Get selected stack and navigate to services
 				cursor := m.table.Cursor()
@@ -254,6 +304,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case key.Matches(msg, m.keys.Back):
 			switch m.state {
+			case ClusterSelection:
+				// Go back to previous view without changing cluster
+				m.state = m.previousState
+				m.clearFilter()
+				// Restore the appropriate table
+				switch m.previousState {
+				case StacksList:
+					m.showStacksTable(m.stacks, m.selectedStack)
+				case ServicesList:
+					m.showServicesTable(m.services, m.selectedService)
+				case TaskList:
+					m.showTasksTable(m.tasks, nil)
+				}
+				return m, nil
 			case ServicesList:
 				// Go back to stacks list
 				m.state = StacksList
@@ -284,6 +348,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					selectedTask := m.tasks[cursor]
 					return m, commands.AttachToTask(m.browser, selectedTask)
 				}
+			}
+			return m, nil
+
+		case key.Matches(msg, m.keys.Cluster):
+			// Switch cluster - not allowed in container view
+			if m.state != ContainerAttached {
+				m.previousState = m.state
+				m.state = ClusterSelection
+				m.clearFilter()
+				return m, commands.ListClusters(m.conf.Clusters, m.currentClusterName)
 			}
 			return m, nil
 
@@ -392,6 +466,12 @@ func (m *Model) refreshCurrentView() {
 			tasks = m.filterTasks(filterText)
 		}
 		m.showTasksTable(tasks, nil)
+	case ClusterSelection:
+		clusters := m.clustersForDisplay
+		if filterText != "" {
+			clusters = m.filterClusters(filterText)
+		}
+		m.showClustersTable(clusters, m.currentClusterName)
 	}
 }
 
@@ -435,6 +515,21 @@ func (m *Model) filterTasks(filterText string) []models.Task {
 			strings.Contains(strings.ToLower(string(task.Status)), filterLower) ||
 			strings.Contains(strings.ToLower(task.Node.Host), filterLower) {
 			filtered = append(filtered, task)
+		}
+	}
+
+	return filtered
+}
+
+// filterClusters filters clusters by name or host (case-insensitive)
+func (m *Model) filterClusters(filterText string) []commands.ClusterTableRow {
+	filterLower := strings.ToLower(filterText)
+	filtered := make([]commands.ClusterTableRow, 0)
+
+	for _, cluster := range m.clustersForDisplay {
+		if strings.Contains(strings.ToLower(cluster.Name), filterLower) ||
+			strings.Contains(strings.ToLower(cluster.Host), filterLower) {
+			filtered = append(filtered, cluster)
 		}
 	}
 

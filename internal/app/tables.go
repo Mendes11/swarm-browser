@@ -5,6 +5,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/table"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/mendes11/swarm-browser/internal/app/commands"
 	"github.com/mendes11/swarm-browser/internal/core/models"
 )
 
@@ -88,6 +89,45 @@ func (m *Model) showTasksTable(tasks []models.Task, selectedTask *models.Task) {
 		{Title: "ContainerID", Width: containerIdWidth},
 		{Title: "Status", Width: statusWidth},
 		{Title: "Node", Width: nodeWidth},
+	})
+	m.table.SetRows(rows)
+	m.table.SetCursor(cursor)
+}
+
+func (m *Model) showClustersTable(clusters []commands.ClusterTableRow, currentClusterName string) {
+	rows := make([]table.Row, len(clusters))
+	cursor := 0
+	for i, cluster := range clusters {
+		// Add arrow indicator for current cluster
+		status := " "
+		if cluster.IsCurrent {
+			status = "→"
+			cursor = i // Set cursor to current cluster
+		}
+		rows[i] = []string{
+			status,
+			cluster.Name,
+			fmt.Sprintf("%d", cluster.NodeCount),
+			cluster.Host,
+		}
+	}
+
+	m.table = newTable(m.keys.Table)
+	m.table.SetWidth(m.tableWidth())
+	m.table.SetHeight(m.tableHeight())
+
+	// Calculate column widths based on table width
+	tableWidth := m.table.Width()
+	statusWidth := 3
+	nameWidth := 20
+	nodesWidth := 7
+	hostWidth := tableWidth - statusWidth - nameWidth - nodesWidth - 4 // Account for borders
+
+	m.table.SetColumns([]table.Column{
+		{Title: "", Width: statusWidth}, // Status column (arrow for current)
+		{Title: "Name", Width: nameWidth},
+		{Title: "Nodes", Width: nodesWidth},
+		{Title: "Host", Width: hostWidth},
 	})
 	m.table.SetRows(rows)
 	m.table.SetCursor(cursor)
