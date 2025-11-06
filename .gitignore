@@ -3,5 +3,7 @@
 tmp/*
 build/*
 clusters.yml
+CLAUDE.local.md
 # Added by goreleaser init:
 dist/
+
