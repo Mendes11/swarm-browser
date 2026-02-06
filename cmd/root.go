@@ -173,8 +173,8 @@ func loadClustersViper(appCfg config.AppConfig) (*viper.Viper, error) {
 	v.SetConfigName("clusters")
 	v.SetConfigType("yml")
 	v.AddConfigPath(".")
-	if userConfigDir, err := os.UserConfigDir(); err == nil {
-		v.AddConfigPath(fmt.Sprintf("%s/swarm-browser", userConfigDir))
+	if configDir, err := config.ConfigDir(); err == nil {
+		v.AddConfigPath(configDir)
 	}
 
 	if err := v.ReadInConfig(); err != nil {

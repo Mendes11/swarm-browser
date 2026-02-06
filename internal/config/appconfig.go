@@ -2,8 +2,6 @@ package config
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
 
 	"github.com/spf13/viper"
 )
@@ -18,11 +16,11 @@ type AppConfig struct {
 // LoadAppConfig reads the app config from ~/.config/swarm-browser/config.yml.
 // Returns a zero-value AppConfig if the file does not exist.
 func LoadAppConfig() (AppConfig, error) {
-	configDir, err := os.UserConfigDir()
+	dir, err := ConfigDir()
 	if err != nil {
-		return AppConfig{}, fmt.Errorf("failed to get user config dir: %w", err)
+		return AppConfig{}, fmt.Errorf("failed to get config dir: %w", err)
 	}
-	return loadAppConfigFrom(filepath.Join(configDir, "swarm-browser"))
+	return loadAppConfigFrom(dir)
 }
 
 func loadAppConfigFrom(dir string) (AppConfig, error) {

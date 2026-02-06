@@ -71,9 +71,5 @@ func fetchURL(url string) ([]byte, error) {
 }
 
 func clustersCacheDir() (string, error) {
-	configDir, err := os.UserConfigDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(configDir, "swarm-browser"), nil
+	return ConfigDir()
 }

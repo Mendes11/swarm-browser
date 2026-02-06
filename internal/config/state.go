@@ -16,11 +16,7 @@ type AppState struct {
 
 // stateDir returns the path to the swarm-browser state directory.
 func stateDir() (string, error) {
-	configDir, err := os.UserConfigDir()
-	if err != nil {
-		return "", fmt.Errorf("failed to get user config dir: %w", err)
-	}
-	return filepath.Join(configDir, "swarm-browser"), nil
+	return ConfigDir()
 }
 
 // LoadState reads the application state from disk.
