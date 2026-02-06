@@ -147,15 +147,20 @@ verify_checksum() {
     return 0
 }
 
-# Check if binary is already installed and get version
+# Check if binary is already installed and extract its semver
 get_installed_version() {
     local binary_path="$1"
     if [ -f "$binary_path" ] && [ -x "$binary_path" ]; then
-        # Try to get version (assuming the binary supports --version flag)
-        "$binary_path" --version 2>/dev/null || echo "unknown"
+        # Extract version number (e.g. "1.2.3") from --version output
+        "$binary_path" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "unknown"
     else
         echo "none"
     fi
+}
+
+# Compare two semver strings. Returns 0 if $1 > $2.
+version_greater_than() {
+    [ "$1" != "$2" ] && [ "$(printf '%s\n%s' "$1" "$2" | sort -V | tail -1)" = "$1" ]
 }
 
 # Main installation function
@@ -181,25 +186,6 @@ main() {
         mkdir -p "$install_dir"
     fi
 
-    # Check if binary already exists
-    local binary_path="${install_dir}/${BINARY_NAME}"
-    local current_version=$(get_installed_version "$binary_path")
-    if [ "$current_version" != "none" ]; then
-        print_warning "Swarm Browser is already installed (version: $current_version)"
-        read -p "Do you want to reinstall/update? (y/N): " -n 1 -r
-        echo
-        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-            print_info "Installation cancelled."
-            exit 0
-        fi
-    fi
-
-    # Create temporary directory
-    local temp_dir=$(mktemp -d)
-    trap "rm -rf $temp_dir" EXIT
-
-    print_info "Downloading Swarm Browser..."
-
     # Get the latest version tag
     local version_tag
     if command_exists curl; then
@@ -213,6 +199,26 @@ main() {
     else
         print_info "Latest version: $version_tag"
     fi
+
+    # Check if binary already exists and compare versions
+    local binary_path="${install_dir}/${BINARY_NAME}"
+    local current_version=$(get_installed_version "$binary_path")
+    if [ "$current_version" != "none" ] && [ "$current_version" != "unknown" ]; then
+        print_info "Installed version: $current_version"
+        if [ -n "$version_tag" ] && ! version_greater_than "$version_tag" "$current_version"; then
+            print_success "Swarm Browser is already up to date."
+            exit 0
+        fi
+        if [ -n "$version_tag" ]; then
+            print_info "Upgrading from $current_version to $version_tag..."
+        fi
+    fi
+
+    # Create temporary directory
+    local temp_dir=$(mktemp -d)
+    trap "rm -rf $temp_dir" EXIT
+
+    print_info "Downloading Swarm Browser..."
 
     # Construct download URLs
     local archive_name="${BINARY_NAME}_${os}_${arch}.tar.gz"
