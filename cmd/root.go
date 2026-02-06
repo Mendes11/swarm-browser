@@ -72,6 +72,7 @@ func runApp(cmd *cobra.Command, args []string) error {
 	conf := config.Config{
 		Clusters: clustersConfig.Clusters,
 		Commands: clustersConfig.Commands,
+		Hooks:    clustersConfig.Hooks,
 	}
 
 	// Load persisted state to restore last-used cluster

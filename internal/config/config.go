@@ -9,6 +9,7 @@ type Config struct {
 	InitialCluster string
 	Clusters       map[string]models.Cluster
 	Commands       map[string]models.Command
+	Hooks          map[string]models.Hook
 }
 
 // LoadClustersConfigFromViper unmarshals the clusters configuration from a Viper instance.

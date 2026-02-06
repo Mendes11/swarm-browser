@@ -3,6 +3,7 @@ package models
 type Cluster struct {
 	Node     `yaml:",inline" mapstructure:",squash"`
 	Name     string             `yaml:"name" mapstructure:"name"`
+	Hook     string             `yaml:"hook,omitempty" mapstructure:"hook"`
 	Nodes    map[string]Node    `yaml:"nodes" mapstructure:"nodes"`
 	Commands map[string]Command `yaml:"commands,omitempty" mapstructure:"commands"`
 }

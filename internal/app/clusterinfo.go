@@ -1,8 +1,6 @@
 package app
 
 import (
-	"fmt"
-
 	"github.com/charmbracelet/lipgloss"
 	"github.com/mendes11/swarm-browser/internal/core/models"
 )
@@ -10,9 +8,10 @@ import (
 type ConnectionStatuses string
 
 const (
-	Disconnected = "Disconnected"
-	Connecting   = "Connecting"
-	Connected    = "Connected"
+	Disconnected      = "Disconnected"
+	Connecting        = "Connecting"
+	Connected         = "Connected"
+	RunningHookStatus = "Running Hook"
 )
 
 type ClusterInfo struct {
@@ -44,10 +43,11 @@ func renderConnectionStatus(status ConnectionStatuses) string {
 	switch status {
 	case Disconnected:
 		return DisconnectedStyle.Render(string(status))
-	case Connecting:
+	case Connecting, RunningHookStatus:
 		return ConnectingStyle.Render(string(status))
 	case Connected:
 		return ConnectedStyle.Render(string(status))
+	default:
+		return DisconnectedStyle.Render(string(status))
 	}
-	panic(fmt.Sprintf("Invalid status %v", status))
 }

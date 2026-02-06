@@ -77,6 +77,12 @@ func New(conf config.Config) Model {
 	if conf.InitialCluster != "" {
 		initialCluster := conf.Clusters[conf.InitialCluster]
 		clusterInfo.Cluster = initialCluster
+		// Set initial status based on whether a hook needs to run
+		if initialCluster.Hook != "" {
+			if _, exists := conf.Hooks[initialCluster.Hook]; exists {
+				clusterInfo.Status = RunningHookStatus
+			}
+		}
 	}
 
 	// Initialize keys first so we can pass the table keymap
@@ -129,9 +135,26 @@ func (m Model) Close() error {
 	return nil
 }
 
+func (m Model) resolveHook(clusterName string) *models.Hook {
+	cluster, exists := m.conf.Clusters[clusterName]
+	if !exists || cluster.Hook == "" {
+		return nil
+	}
+	hook, exists := m.conf.Hooks[cluster.Hook]
+	if !exists {
+		return nil
+	}
+	return &hook
+}
+
 // Init implements tea.Model.
 func (m Model) Init() tea.Cmd {
-	m.clusterInfo.Status = Connecting
+	if hook := m.resolveHook(m.currentClusterName); hook != nil {
+		return tea.Batch(
+			commands.RunClusterHook(m.clusterInfo.Cluster, *hook),
+			m.spinner.Tick,
+		)
+	}
 	return commands.ConnectToCluster(m.clusterInfo.Cluster)
 }
 
@@ -194,6 +217,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.clusterInfo.Status = Disconnected
 		return m, nil
 
+	case commands.HookSucceeded:
+		log.Printf("Hook succeeded for cluster %s, now connecting", msg.Cluster.Name)
+		m.clusterInfo.Status = Connecting
+		return m, commands.ConnectToCluster(msg.Cluster)
+
+	case commands.HookFailed:
+		log.Printf("Hook failed for cluster %s: %v", msg.Cluster.Name, msg.Err)
+		m.clusterInfo.Status = Disconnected
+		m.clusterInfo.Err = msg.Err
+		return m, nil
+
 	case commands.ContainerAttachedMsg:
 		// Successfully attached to container — hand off terminal via tea.Exec
 		m.state = ContainerAttached
@@ -253,7 +287,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case spinner.TickMsg:
-		if m.state == ContainerAttaching {
+		if m.state == ContainerAttaching || m.state == Initializing {
 			var cmd tea.Cmd
 			m.spinner, cmd = m.spinner.Update(msg)
 			return m, cmd
@@ -266,8 +300,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.attachError = nil
 		}
 
-		// During container attachment, only allow quit
+		// During container attachment or initializing, only allow quit and cluster switch
 		if m.state == ContainerAttaching {
+			if key.Matches(msg, m.keys.Quit) {
+				return m, tea.Quit
+			}
+			return m, nil
+		}
+		if m.state == Initializing && m.clusterInfo.Status != Disconnected {
 			if key.Matches(msg, m.keys.Quit) {
 				return m, tea.Quit
 			}
@@ -413,12 +453,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.tasks = nil
 					// Update current cluster
 					m.currentClusterName = selectedCluster.Name
-					m.clusterInfo.Cluster = m.conf.Clusters[selectedCluster.Name]
-					m.clusterInfo.Status = Connecting
+					cluster := m.conf.Clusters[selectedCluster.Name]
+					m.clusterInfo.Cluster = cluster
+					m.clusterInfo.Err = nil
 					m.state = Initializing
+
+					if hook := m.resolveHook(selectedCluster.Name); hook != nil {
+						m.clusterInfo.Status = RunningHookStatus
+						return m, tea.Batch(
+							commands.RunClusterHook(cluster, *hook),
+							commands.SaveLastCluster(selectedCluster.Name),
+							m.spinner.Tick,
+						)
+					}
+					m.clusterInfo.Status = Connecting
 					return m, tea.Batch(
-						commands.ConnectToCluster(m.conf.Clusters[selectedCluster.Name]),
+						commands.ConnectToCluster(cluster),
 						commands.SaveLastCluster(selectedCluster.Name),
+						m.spinner.Tick,
 					)
 				}
 
@@ -563,6 +615,27 @@ func (m Model) View() string {
 	// Build main content
 	var mainContent string
 	switch m.state {
+	case Initializing:
+		if m.clusterInfo.Err != nil {
+			errorMsg := fmt.Sprintf("Failed to connect to %s:\n%v", m.clusterInfo.Cluster.Name, m.clusterInfo.Err)
+			mainContent = lipgloss.NewStyle().
+				Foreground(ColorError).
+				Padding(2, 4).
+				Render(errorMsg)
+		} else {
+			statusText := fmt.Sprintf("Connecting to %s...", m.clusterInfo.Cluster.Name)
+			if m.clusterInfo.Status == RunningHookStatus {
+				// Look up the hook name for display
+				if hook := m.resolveHook(m.currentClusterName); hook != nil {
+					statusText = fmt.Sprintf("Running hook %q for %s...", hook.Name, m.clusterInfo.Cluster.Name)
+				}
+			}
+			msg := fmt.Sprintf("%s %s", m.spinner.View(), statusText)
+			mainContent = lipgloss.NewStyle().
+				Foreground(ColorStatusPending).
+				Padding(2, 4).
+				Render(msg)
+		}
 	case ContainerAttaching:
 		msg := fmt.Sprintf("%s Connecting to %s...", m.spinner.View(), m.attachingTarget)
 		mainContent = lipgloss.NewStyle().

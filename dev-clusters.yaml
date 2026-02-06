@@ -19,11 +19,18 @@ commands:
     name: "View Logs"
     cmd: "tail -f /var/log/*.log"
 
+# Hook definitions (executed before connecting to a cluster)
+hooks:
+  dev-network:
+    name: "Dev Network Switch"
+    cmd: "echo 'Switching to dev network'"
+
 # Define mock clusters (similar to clusters.yaml structure)
 clusters:
   dev-local:
     name: "Development Local"
     host: "localhost"
+    hook: "dev-network"
     nodes:
       manager-01:
         host: "localhost"

@@ -127,7 +127,7 @@ func (c *DockerConnector) connectToHost(host string) (cli *client.Client, err er
 	c.sshConnections[host] = sshConnection{Cmd: sshCommand, SocketPath: socketPath}
 
 	// Wait for the socket to be available
-	if err := waitForSocket(socketPath, 15*time.Second); err != nil {
+	if err := waitForSocket(socketPath, 30*time.Second); err != nil {
 		return nil, errors.Wrap(err, fmt.Sprintf("failed to connect to Docker socket for host %s", host))
 	}
 

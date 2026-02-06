@@ -11,6 +11,21 @@ import (
 type ClustersConfig struct {
 	Clusters map[string]models.Cluster `yaml:"clusters" mapstructure:"clusters"`
 	Commands map[string]models.Command `yaml:"commands,omitempty" mapstructure:"commands"`
+	Hooks    map[string]models.Hook    `yaml:"hooks,omitempty" mapstructure:"hooks"`
+}
+
+// ResolveHookForCluster returns the hook for a given cluster, or nil if
+// the cluster has no hook or the referenced hook key doesn't exist.
+func (c *ClustersConfig) ResolveHookForCluster(clusterName string) *models.Hook {
+	cluster, exists := c.Clusters[clusterName]
+	if !exists || cluster.Hook == "" {
+		return nil
+	}
+	hook, exists := c.Hooks[cluster.Hook]
+	if !exists {
+		return nil
+	}
+	return &hook
 }
 
 // ResolveCommandsForCluster returns the effective commands for a given cluster.
