@@ -28,6 +28,7 @@ import (
 )
 
 var clustersFile string
+var clustersURL string
 
 var rootCmd = &cobra.Command{
 	Use:   "swarm-browser",
@@ -56,10 +57,19 @@ func init() {
 		&clustersFile, "clusters", "",
 		"path to clusters.yml file (env: SWARM_BROWSER_CLUSTERS)",
 	)
+	rootCmd.PersistentFlags().StringVar(
+		&clustersURL, "clusters-url", "",
+		"URL to fetch clusters config from (cached locally on success)",
+	)
 }
 
 func runApp(cmd *cobra.Command, args []string) error {
-	v, err := loadClustersViper()
+	appCfg, err := config.LoadAppConfig()
+	if err != nil {
+		log.Printf("Warning: failed to load app config: %v", err)
+	}
+
+	v, err := loadClustersViper(appCfg)
 	if err != nil {
 		return fmt.Errorf("failed to load clusters config: %w", err)
 	}
@@ -112,34 +122,75 @@ func runApp(cmd *cobra.Command, args []string) error {
 // loadClustersViper creates and configures a Viper instance for the clusters config file.
 //
 // Precedence (highest to lowest):
-//  1. --clusters flag
-//  2. SWARM_BROWSER_CLUSTERS environment variable
-//  3. ./clusters.yml (current working directory)
-//  4. UserConfigDir/swarm-browser/clusters.yml
-func loadClustersViper() (*viper.Viper, error) {
+//  1. --clusters-url flag
+//  2. --clusters flag
+//  3. clusters_url from config.yml
+//  4. SWARM_BROWSER_CLUSTERS environment variable
+//  5. clusters_file from config.yml
+//  6. ./clusters.yml (current working directory)
+//  7. UserConfigDir/swarm-browser/clusters.yml
+func loadClustersViper(appCfg config.AppConfig) (*viper.Viper, error) {
 	v := viper.New()
 
-	explicitPath := clustersFile
-	if explicitPath == "" {
-		explicitPath = os.Getenv("SWARM_BROWSER_CLUSTERS")
+	// 1. --clusters-url flag (highest precedence)
+	if clustersURL != "" {
+		return loadClustersFromURL(v, clustersURL)
 	}
 
-	if explicitPath != "" {
-		v.SetConfigFile(explicitPath)
-	} else {
-		v.SetConfigName("clusters")
-		v.SetConfigType("yml")
-
-		v.AddConfigPath(".")
-
-		if userConfigDir, err := os.UserConfigDir(); err == nil {
-			v.AddConfigPath(fmt.Sprintf("%s/swarm-browser", userConfigDir))
+	// 2. --clusters flag
+	if clustersFile != "" {
+		v.SetConfigFile(clustersFile)
+		if err := v.ReadInConfig(); err != nil {
+			return nil, fmt.Errorf("could not read clusters config: %w", err)
 		}
+		return v, nil
+	}
+
+	// 3. clusters_url from config.yml
+	if appCfg.ClustersURL != "" {
+		return loadClustersFromURL(v, appCfg.ClustersURL)
+	}
+
+	// 4. SWARM_BROWSER_CLUSTERS env var
+	if envPath := os.Getenv("SWARM_BROWSER_CLUSTERS"); envPath != "" {
+		v.SetConfigFile(envPath)
+		if err := v.ReadInConfig(); err != nil {
+			return nil, fmt.Errorf("could not read clusters config: %w", err)
+		}
+		return v, nil
+	}
+
+	// 5. clusters_file from config.yml
+	if appCfg.ClustersFile != "" {
+		v.SetConfigFile(appCfg.ClustersFile)
+		if err := v.ReadInConfig(); err != nil {
+			return nil, fmt.Errorf("could not read clusters config: %w", err)
+		}
+		return v, nil
+	}
+
+	// 6-7. Default search paths
+	v.SetConfigName("clusters")
+	v.SetConfigType("yml")
+	v.AddConfigPath(".")
+	if userConfigDir, err := os.UserConfigDir(); err == nil {
+		v.AddConfigPath(fmt.Sprintf("%s/swarm-browser", userConfigDir))
 	}
 
 	if err := v.ReadInConfig(); err != nil {
 		return nil, fmt.Errorf("could not read clusters config: %w", err)
 	}
+	return v, nil
+}
 
+func loadClustersFromURL(v *viper.Viper, url string) (*viper.Viper, error) {
+	cachePath, err := config.FetchClustersFromURL(url)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load clusters from URL: %w", err)
+	}
+	v.SetConfigFile(cachePath)
+	if err := v.ReadInConfig(); err != nil {
+		return nil, fmt.Errorf("could not read fetched clusters config: %w", err)
+	}
 	return v, nil
 }

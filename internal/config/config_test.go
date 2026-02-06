@@ -2,9 +2,11 @@ package config
 
 import (
 	"os"
+	"path"
 	"path/filepath"
 	"testing"
 
+	"github.com/mendes11/swarm-browser/internal/core/models"
 	"github.com/spf13/viper"
 )
 
@@ -160,6 +162,133 @@ clusters:
 	}
 	if len(staging.Commands) != 0 {
 		t.Errorf("Expected 0 cluster commands for staging, got %d", len(staging.Commands))
+	}
+}
+
+func TestResolveCommandsForCluster_InheritedEmptyOverride(t *testing.T) {
+	yamlContent := `commands:
+  rails-console:
+    name: "Rails Console"
+    cmd: "bin/docker-entrypoint bin/rails c"
+    match_services: ["*app"]
+  postgres-console:
+    name: "Postgres Console"
+    cmd: "psql -U postgres"
+    match_services: ["*pg"]
+clusters:
+  test:
+    name: "test Cluster"
+    host: "manager-01.example.com"
+    commands:
+      rails-console:
+        match_services: ["tally*"]
+      postgres-console: {}
+    nodes:
+      manager-01:
+        host: "manager-01.example.com"
+        hostname: "manager-01.example.com"`
+
+	tmpDir := t.TempDir()
+	tmpFile := filepath.Join(tmpDir, "clusters.yml")
+	if err := os.WriteFile(tmpFile, []byte(yamlContent), 0644); err != nil {
+		t.Fatalf("Failed to create temp file: %v", err)
+	}
+
+	cfg, err := LoadClustersConfig(tmpFile)
+	if err != nil {
+		t.Fatalf("Failed to load config: %v", err)
+	}
+
+	cmds := cfg.ResolveCommandsForCluster("test")
+	if len(cmds) != 2 {
+		t.Fatalf("Expected 2 resolved commands, got %d: %+v", len(cmds), cmds)
+	}
+
+	// Find the postgres-console command and verify it inherited from global
+	var pgCmd *models.Command
+	for _, cmd := range cmds {
+		if cmd.Name == "Postgres Console" {
+			pgCmd = &cmd
+			break
+		}
+	}
+	if pgCmd == nil {
+		t.Fatal("Expected to find 'Postgres Console' in resolved commands")
+	}
+	if pgCmd.Cmd != "psql -U postgres" {
+		t.Errorf("Expected inherited cmd 'psql -U postgres', got '%s'", pgCmd.Cmd)
+	}
+	if len(pgCmd.MatchServices) != 1 || pgCmd.MatchServices[0] != "*pg" {
+		t.Errorf("Expected inherited match_services [\"*pg\"], got %v", pgCmd.MatchServices)
+	}
+
+	// Verify that the pattern actually matches the service name "tally_pg"
+	matched, _ := path.Match(pgCmd.MatchServices[0], "tally_pg")
+	if !matched {
+		t.Errorf("Expected pattern %q to match service name 'tally_pg'", pgCmd.MatchServices[0])
+	}
+}
+
+func TestResolveCommandsForCluster_InheritedEmptyOverrideViper(t *testing.T) {
+	yamlContent := `commands:
+  rails-console:
+    name: "Rails Console"
+    cmd: "bin/docker-entrypoint bin/rails c"
+    match_services: ["*app"]
+  postgres-console:
+    name: "Postgres Console"
+    cmd: "psql -U postgres"
+    match_services: ["*pg"]
+clusters:
+  test:
+    name: "test Cluster"
+    host: "manager-01.example.com"
+    commands:
+      rails-console:
+        match_services: ["tally*"]
+      postgres-console: {}
+    nodes:
+      manager-01:
+        host: "manager-01.example.com"
+        hostname: "manager-01.example.com"`
+
+	tmpDir := t.TempDir()
+	tmpFile := filepath.Join(tmpDir, "clusters.yml")
+	if err := os.WriteFile(tmpFile, []byte(yamlContent), 0644); err != nil {
+		t.Fatalf("Failed to create temp file: %v", err)
+	}
+
+	v := viper.New()
+	v.SetConfigFile(tmpFile)
+	if err := v.ReadInConfig(); err != nil {
+		t.Fatalf("Failed to read config with viper: %v", err)
+	}
+
+	cfg, err := LoadClustersConfigFromViper(v)
+	if err != nil {
+		t.Fatalf("Failed to load config from viper: %v", err)
+	}
+
+	cmds := cfg.ResolveCommandsForCluster("test")
+	if len(cmds) != 2 {
+		t.Fatalf("Expected 2 resolved commands, got %d: %+v", len(cmds), cmds)
+	}
+
+	var pgCmd *models.Command
+	for _, cmd := range cmds {
+		if cmd.Name == "Postgres Console" {
+			pgCmd = &cmd
+			break
+		}
+	}
+	if pgCmd == nil {
+		t.Fatal("Expected to find 'Postgres Console' in resolved commands")
+	}
+	if pgCmd.Cmd != "psql -U postgres" {
+		t.Errorf("Expected inherited cmd 'psql -U postgres', got '%s'", pgCmd.Cmd)
+	}
+	if len(pgCmd.MatchServices) != 1 || pgCmd.MatchServices[0] != "*pg" {
+		t.Errorf("Expected inherited match_services [\"*pg\"], got %v", pgCmd.MatchServices)
 	}
 }
 

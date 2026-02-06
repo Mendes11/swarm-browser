@@ -12,11 +12,9 @@ type Config struct {
 	Hooks          map[string]models.Hook
 }
 
-// LoadClustersConfigFromViper unmarshals the clusters configuration from a Viper instance.
+// LoadClustersConfigFromViper loads the clusters configuration from the file
+// that Viper resolved. It uses direct YAML parsing instead of Viper's
+// Unmarshal to avoid losing empty map entries (e.g. "postgres-console: {}").
 func LoadClustersConfigFromViper(v *viper.Viper) (*ClustersConfig, error) {
-	var cfg ClustersConfig
-	if err := v.Unmarshal(&cfg); err != nil {
-		return nil, err
-	}
-	return &cfg, nil
+	return LoadClustersConfig(v.ConfigFileUsed())
 }
