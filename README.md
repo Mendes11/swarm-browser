@@ -65,6 +65,65 @@ clusters:
         hostname: "prod-02"
 ```
 
+### Commands
+
+You can define custom commands that are available when attaching to containers. Commands can be defined globally (available to all clusters) or per-cluster, and can be filtered to match specific services using glob patterns:
+
+```yaml
+commands:
+  rails-console:
+    name: "Rails Console"
+    cmd: "bundle exec rails console"
+    match_services: ["*web*", "*api*"]
+  redis-cli:
+    name: "Redis CLI"
+    cmd: "redis-cli"
+    match_services: ["*redis*"]
+
+clusters:
+  production:
+    name: "Production Cluster"
+    host: "prod-manager-01"
+    commands:
+      rails-console: {}  # inherit global definition
+    nodes:
+      manager-01:
+        host: "prod-01"
+        hostname: "prod-01"
+```
+
+When attaching to a container (via the `c` key), a command picker shows matching commands based on the service name, plus any previously used custom commands and a built-in shell option.
+
+### Hooks
+
+Hooks are shell commands that run before connecting to a cluster. They are useful for tasks like switching VPN profiles, connecting to a bastion host, or changing Tailscale accounts.
+
+Hooks are defined globally under the `hooks` key and referenced by name from each cluster:
+
+```yaml
+hooks:
+  switch-to-prod:
+    name: "Switch to Prod Tailnet"
+    cmd: "tailscale switch prod-tailnet"
+  switch-to-staging:
+    name: "Switch to Staging Tailnet"
+    cmd: "tailscale switch staging-tailnet"
+
+clusters:
+  production:
+    name: "Production Cluster"
+    host: "prod-manager-01"
+    hook: "switch-to-prod"
+    nodes: ...
+  staging:
+    name: "Staging Cluster"
+    host: "staging-manager-01"
+    hook: "switch-to-staging"
+    nodes: ...
+```
+
+Hooks run on both initial startup and when switching clusters. If a hook fails (exits with a non-zero code), the connection is blocked and the error is displayed.
+
 ### Prerequisites
 
 - SSH access to your Docker Swarm nodes
