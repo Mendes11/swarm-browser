@@ -2,30 +2,20 @@ package config
 
 import (
 	"github.com/mendes11/swarm-browser/internal/core/models"
+	"github.com/spf13/viper"
 )
 
 type Config struct {
-	ClusterFilePath string
-	InitialCluster  string
-	Clusters        map[string]models.Cluster
+	InitialCluster string
+	Clusters       map[string]models.Cluster
+	Commands       map[string]models.Command
 }
 
-var defaultConfig = &Config{
-	ClusterFilePath: "./clusters.yml",
-	Clusters:        nil,
-}
-
-func LoadConfig() Config {
-	conf := defaultConfig
-	// TODO: Load configs from variables or through Flags
-	clusters, err := LoadClustersConfig(conf.ClusterFilePath)
-	if err != nil {
-		panic(err)
+// LoadClustersConfigFromViper unmarshals the clusters configuration from a Viper instance.
+func LoadClustersConfigFromViper(v *viper.Viper) (*ClustersConfig, error) {
+	var cfg ClustersConfig
+	if err := v.Unmarshal(&cfg); err != nil {
+		return nil, err
 	}
-	conf.Clusters = clusters.Clusters
-	for k := range conf.Clusters {
-		conf.InitialCluster = k
-		break
-	}
-	return *conf
+	return &cfg, nil
 }

@@ -1,9 +1,10 @@
 package models
 
 type Cluster struct {
-	Node  `yaml:",inline"`
-	Name  string          `yaml:"name"`
-	Nodes map[string]Node `yaml:"nodes"`
+	Node     `yaml:",inline" mapstructure:",squash"`
+	Name     string             `yaml:"name" mapstructure:"name"`
+	Nodes    map[string]Node    `yaml:"nodes" mapstructure:"nodes"`
+	Commands map[string]Command `yaml:"commands,omitempty" mapstructure:"commands"`
 }
 
 func (c *Cluster) GetNodeByHostname(hostname string) (Node, bool) {

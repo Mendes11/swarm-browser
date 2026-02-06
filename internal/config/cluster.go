@@ -9,7 +9,54 @@ import (
 )
 
 type ClustersConfig struct {
-	Clusters map[string]models.Cluster `yaml:"clusters"`
+	Clusters map[string]models.Cluster `yaml:"clusters" mapstructure:"clusters"`
+	Commands map[string]models.Command `yaml:"commands,omitempty" mapstructure:"commands"`
+}
+
+// ResolveCommandsForCluster returns the effective commands for a given cluster.
+// If the cluster defines its own commands, those are used (merged with global definitions).
+// If the cluster has no commands, all global commands are returned.
+func (c *ClustersConfig) ResolveCommandsForCluster(clusterName string) []models.Command {
+	cluster, exists := c.Clusters[clusterName]
+	if !exists {
+		return nil
+	}
+
+	// If cluster has no commands section, return all global commands
+	if len(cluster.Commands) == 0 {
+		result := make([]models.Command, 0, len(c.Commands))
+		for _, cmd := range c.Commands {
+			result = append(result, cmd)
+		}
+		return result
+	}
+
+	// Cluster has commands: resolve each key against global definitions
+	result := make([]models.Command, 0, len(cluster.Commands))
+	for key, clusterCmd := range cluster.Commands {
+		resolved := clusterCmd
+
+		// If the key exists globally, inherit missing fields
+		if globalCmd, ok := c.Commands[key]; ok {
+			if resolved.Name == "" {
+				resolved.Name = globalCmd.Name
+			}
+			if resolved.Cmd == "" {
+				resolved.Cmd = globalCmd.Cmd
+			}
+			if len(resolved.MatchServices) == 0 {
+				resolved.MatchServices = globalCmd.MatchServices
+			}
+		}
+
+		// Use the key as fallback name if still empty
+		if resolved.Name == "" {
+			resolved.Name = key
+		}
+
+		result = append(result, resolved)
+	}
+	return result
 }
 
 func LoadClustersConfig(path string) (*ClustersConfig, error) {

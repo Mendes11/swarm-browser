@@ -3,5 +3,5 @@
 echo "Starting Swarm Browser in development mode..."
 echo ""
 
-# Run in development mode
-go run cmd/swarm-tui/main.go -dev -cluster dev-local
+# Run with the dev clusters configuration
+go run main.go --clusters dev-clusters.yaml

@@ -1,6 +1,24 @@
 # Development Browser Configuration
 # This file mimics the structure of clusters.yaml but with mock data for development
 
+# Global command definitions (available to all clusters unless overridden)
+commands:
+  rails-console:
+    name: "Rails Console"
+    cmd: "bundle exec rails console"
+    match_services: ["*web*", "*api*"]
+  postgres-shell:
+    name: "PostgreSQL Shell"
+    cmd: "psql -U postgres"
+    match_services: ["*postgres*"]
+  redis-cli:
+    name: "Redis CLI"
+    cmd: "redis-cli"
+    match_services: ["*redis*"]
+  view-logs:
+    name: "View Logs"
+    cmd: "tail -f /var/log/*.log"
+
 # Define mock clusters (similar to clusters.yaml structure)
 clusters:
   dev-local:

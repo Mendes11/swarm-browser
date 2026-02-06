@@ -1,15 +1,21 @@
+/*
+Copyright © 2025 Rafael Mendes P. Bachiega rafaelmpb11@hotmail.com
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 package main
 
-import (
-	"flag"
-	"fmt"
-	"log"
-	"os"
-
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/mendes11/swarm-browser/internal/app"
-	"github.com/mendes11/swarm-browser/internal/config"
-)
+import "github.com/mendes11/swarm-browser/cmd"
 
 // Version variables - set by goreleaser at build time
 var (
@@ -20,48 +26,6 @@ var (
 )
 
 func main() {
-	// Define command line flags
-	versionFlag := flag.Bool("version", false, "Print version information")
-	versionShortFlag := flag.Bool("v", false, "Print version information")
-
-	// Custom usage message
-	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Swarm Browser - Terminal UI for Docker Swarm\n\n")
-		fmt.Fprintf(os.Stderr, "Usage:\n")
-		fmt.Fprintf(os.Stderr, "  swarm-browser [flags]\n\n")
-		fmt.Fprintf(os.Stderr, "Flags:\n")
-		flag.PrintDefaults()
-		fmt.Fprintf(os.Stderr, "\nConfiguration:\n")
-		fmt.Fprintf(os.Stderr, "  Swarm Browser looks for a 'clusters.yml' file in the current directory\n")
-		fmt.Fprintf(os.Stderr, "  to configure cluster connections.\n\n")
-		fmt.Fprintf(os.Stderr, "For more information, visit: https://github.com/Mendes11/swarm-browser\n")
-	}
-
-	// Parse flags
-	flag.Parse()
-
-	// Handle version flag
-	if *versionFlag || *versionShortFlag {
-		fmt.Printf("swarm-browser version %s\n", version)
-		fmt.Printf("  commit: %s\n", commit)
-		fmt.Printf("  built at: %s\n", date)
-		fmt.Printf("  built by: %s\n", builtBy)
-		os.Exit(0)
-	}
-
-	// Normal application startup
-	conf := config.LoadConfig()
-	app := app.New(conf)
-	defer app.Close()
-
-	f, err := tea.LogToFile("debug.log", "debug")
-	if err != nil {
-		panic(err)
-	}
-	defer f.Close()
-
-	if _, err := tea.NewProgram(app, tea.WithAltScreen()).Run(); err != nil {
-		log.Printf("Program exited with error: %v", err)
-		panic(err)
-	}
+	cmd.SetVersionInfo(version, commit, date, builtBy)
+	cmd.Execute()
 }

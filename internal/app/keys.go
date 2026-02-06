@@ -105,6 +105,7 @@ func (k AppKeyMap) ShortHelpForView(viewState ViewState) []key.Binding {
 			k.Enter,
 			k.Back,
 			k.Cluster,
+			k.Connect,
 			k.Refresh,
 			k.Help,
 			k.Quit,
@@ -127,6 +128,25 @@ func (k AppKeyMap) ShortHelpForView(viewState ViewState) []key.Binding {
 			k.Enter,
 			k.Back,
 			k.Help,
+			k.Quit,
+		}
+	case CommandSelection:
+		return []key.Binding{
+			k.Table.LineUp,
+			k.Table.LineDown,
+			k.Enter,
+			k.Back,
+			k.Help,
+			k.Quit,
+		}
+	case CustomCommandInput:
+		return []key.Binding{
+			k.Enter,
+			k.Cancel,
+			k.Quit,
+		}
+	case ContainerAttaching:
+		return []key.Binding{
 			k.Quit,
 		}
 	default:
@@ -180,7 +200,7 @@ func (k AppKeyMap) FullHelpForView(viewState ViewState) [][]key.Binding {
 			{k.Help, k.Quit},
 		}
 	case ServicesList:
-		// In services list, show back but not connect
+		// In services list, show back and connect
 		return [][]key.Binding{
 			// Table navigation
 			{
@@ -194,8 +214,8 @@ func (k AppKeyMap) FullHelpForView(viewState ViewState) [][]key.Binding {
 				k.Table.GotoTop,
 				k.Table.GotoBottom,
 			},
-			// App actions - show back but not connect
-			{k.Enter, k.Back, k.Cluster, k.Refresh, k.Filter},
+			// App actions
+			{k.Enter, k.Back, k.Cluster, k.Refresh, k.Connect, k.Filter},
 			// App controls
 			{k.Help, k.Quit},
 		}
@@ -239,6 +259,26 @@ func (k AppKeyMap) FullHelpForView(viewState ViewState) [][]key.Binding {
 			// App controls
 			{k.Help, k.Quit},
 		}
+	case CommandSelection:
+		return [][]key.Binding{
+			{
+				k.Table.LineUp,
+				k.Table.LineDown,
+				k.Table.PageUp,
+				k.Table.PageDown,
+			},
+			{k.Enter, k.Back, k.Cancel},
+			{k.Help, k.Quit},
+		}
+	case CustomCommandInput:
+		return [][]key.Binding{
+			{k.Enter, k.Cancel},
+			{k.Quit},
+		}
+	case ContainerAttaching:
+		return [][]key.Binding{
+			{k.Quit},
+		}
 	default:
 		return k.FullHelp()
 	}
@@ -255,6 +295,10 @@ func (k *AppKeyMap) SetEnterHelpText(viewState ViewState) {
 		k.Enter.SetHelp("enter", "attach to container")
 	case ClusterSelection:
 		k.Enter.SetHelp("enter", "select cluster")
+	case CommandSelection:
+		k.Enter.SetHelp("enter", "run command")
+	case CustomCommandInput:
+		k.Enter.SetHelp("enter", "execute")
 	default:
 		k.Enter.SetHelp("enter", "select")
 	}

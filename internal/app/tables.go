@@ -2,6 +2,7 @@ package app
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/charmbracelet/bubbles/table"
 	"github.com/charmbracelet/lipgloss"
@@ -128,6 +129,48 @@ func (m *Model) showClustersTable(clusters []commands.ClusterTableRow, currentCl
 		{Title: "Name", Width: nameWidth},
 		{Title: "Nodes", Width: nodesWidth},
 		{Title: "Host", Width: hostWidth},
+	})
+	m.table.SetRows(rows)
+	m.table.SetCursor(cursor)
+}
+
+func (m *Model) showCommandPickerTable(items []commandPickerItem, lastSelected string) {
+	rows := make([]table.Row, len(items))
+	cursor := 0
+	for i, item := range items {
+		cmdDisplay := strings.Join(item.Cmd, " ")
+		if item.IsShell {
+			cmdDisplay = "/bin/bash (fallback: /bin/sh)"
+		}
+		if item.IsCustom {
+			cmdDisplay = "..."
+		}
+		source := ""
+		switch item.Source {
+		case "config":
+			source = "config"
+		case "history":
+			source = "history"
+		}
+		rows[i] = []string{item.Name, cmdDisplay, source}
+		if lastSelected != "" && item.Name == lastSelected {
+			cursor = i
+		}
+	}
+
+	m.table = newTable(m.keys.Table)
+	m.table.SetWidth(m.tableWidth())
+	m.table.SetHeight(m.tableHeight())
+
+	tableWidth := m.table.Width()
+	nameWidth := 25
+	sourceWidth := 10
+	cmdWidth := tableWidth - nameWidth - sourceWidth - 4
+
+	m.table.SetColumns([]table.Column{
+		{Title: "Command", Width: nameWidth},
+		{Title: "Exec", Width: cmdWidth},
+		{Title: "Source", Width: sourceWidth},
 	})
 	m.table.SetRows(rows)
 	m.table.SetCursor(cursor)

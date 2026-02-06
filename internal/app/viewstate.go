@@ -7,8 +7,11 @@ const (
 	StacksList
 	ServicesList
 	TaskList
+	ContainerAttaching
 	ContainerAttached
 	ClusterSelection
+	CommandSelection
+	CustomCommandInput
 )
 
 func (v ViewState) String() string {
@@ -21,10 +24,16 @@ func (v ViewState) String() string {
 		return "Services List"
 	case TaskList:
 		return "Task List"
+	case ContainerAttaching:
+		return "Container Attaching"
 	case ContainerAttached:
 		return "Container Attached"
 	case ClusterSelection:
 		return "Cluster Selection"
+	case CommandSelection:
+		return "Command Selection"
+	case CustomCommandInput:
+		return "Custom Command Input"
 	default:
 		return "Unknown"
 	}

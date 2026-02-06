@@ -1,10 +1,13 @@
 package app
 
 import (
+	"fmt"
+	"log"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/help"
 	"github.com/charmbracelet/bubbles/key"
+	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/table"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
@@ -37,14 +40,30 @@ type Model struct {
 	selectedService *models.Service
 	tasks           []models.Task
 
+	// Filtered lists (what's currently displayed in the table)
+	filteredStacks   []models.Stack
+	filteredServices []models.Service
+	filteredTasks    []models.Task
+	filteredClusters []commands.ClusterTableRow
+
 	// Cluster selection state
 	clustersForDisplay []commands.ClusterTableRow
 	previousState      ViewState
 	currentClusterName string
 
 	// Container session
-	containerView *ContainerView
-	containerConn core.ContainerConnection
+	containerConn     core.ContainerConnection
+	spinner           spinner.Model
+	attachingTarget   string
+	attachError       error
+	stateBeforeAttach ViewState
+
+	// Command picker state
+	commandPickerItems []commandPickerItem
+	customCmdInput     textinput.Model
+	commandTarget      commandTarget
+	appState           config.AppState
+	clustersConfig     *config.ClustersConfig
 }
 
 var _ tea.Model = Model{}
@@ -70,6 +89,20 @@ func New(conf config.Config) Model {
 	filterInput.CharLimit = 100
 	filterInput.Width = 50
 
+	s := spinner.New()
+	s.Spinner = spinner.Dot
+	s.Style = lipgloss.NewStyle().Foreground(ColorStatusPending)
+
+	// Initialize custom command text input
+	customCmdInput := textinput.New()
+	customCmdInput.Placeholder = "e.g., rails console, psql -U postgres"
+	customCmdInput.Prompt = "> "
+	customCmdInput.CharLimit = 200
+	customCmdInput.Width = 60
+
+	// Load app state for custom commands and last-selected commands
+	appState, _ := config.LoadState()
+
 	return Model{
 		conf:               conf,
 		state:              Initializing,
@@ -79,14 +112,14 @@ func New(conf config.Config) Model {
 		help:               help.New(),
 		filterInput:        filterInput,
 		currentClusterName: conf.InitialCluster,
+		spinner:            s,
+		customCmdInput:     customCmdInput,
+		appState:           appState,
+		clustersConfig:     newClustersConfig(conf),
 	}
 }
 
 func (m Model) Close() error {
-	// Clean up container connection if active
-	if m.containerView != nil {
-		m.containerView.RestoreTerminal()
-	}
 	if m.containerConn != nil {
 		m.containerConn.Close()
 	}
@@ -111,12 +144,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 
-		// If we're in container mode, pass resize to container view
-		if m.state == ContainerAttached && m.containerView != nil {
-			*m.containerView, cmd = m.containerView.Update(msg)
-			return m, cmd
-		}
-
 		m.table.SetWidth(m.tableWidth())
 		m.table.SetHeight(m.tableHeight())
 
@@ -130,7 +157,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			NodeInfo: msg.Info,
 			Status:   Connected,
 		}
-		return m, commands.ListStacks(m.browser)
+		return m, tea.Batch(
+			commands.ListStacks(m.browser),
+			commands.SaveLastCluster(m.currentClusterName),
+		)
 
 	case commands.StacksUpdated:
 		m.state = StacksList
@@ -140,18 +170,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			selectedStack = &m.stacks[m.table.Cursor()]
 		}
 		m.stacks = msg.Stacks
+		m.filteredStacks = msg.Stacks
 		m.showStacksTable(msg.Stacks, selectedStack)
 		return m, nil
 
 	case commands.ServicesUpdated:
 		m.state = ServicesList
 		m.services = msg.Services
+		m.filteredServices = msg.Services
 		m.selectedStack = &msg.Stack
 		m.showServicesTable(msg.Services, nil)
 		return m, nil
 	case commands.TasksUpdated:
 		m.state = TaskList
 		m.tasks = msg.Tasks
+		m.filteredTasks = msg.Tasks
 		m.selectedService = &msg.Service
 		m.showTasksTable(msg.Tasks, nil)
 		return m, nil
@@ -162,31 +195,117 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case commands.ContainerAttachedMsg:
-		// Successfully attached to container
+		// Successfully attached to container — hand off terminal via tea.Exec
 		m.state = ContainerAttached
 		m.containerConn = msg.Conn
-		view := NewContainerView(msg.Conn)
-		m.containerView = &view
-		return m, m.containerView.Init()
+		execCmd := NewContainerExecCmd(msg.Conn)
+		return m, tea.Exec(execCmd, func(err error) tea.Msg {
+			return ExitContainerViewMsg{Err: err}
+		})
 
 	case ExitContainerViewMsg:
-		// Clean exit from container
-		m.state = ServicesList
-		m.containerConn.Close()
-		m.containerView = nil
+		// Container session ended — return to the view we came from
+		m.state = m.stateBeforeAttach
+		if m.containerConn != nil {
+			m.containerConn.Close()
+		}
 		m.containerConn = nil
+		m.commandTarget = commandTarget{}
+		// Restore the table for the state we're returning to
+		switch m.state {
+		case TaskList:
+			m.showTasksTable(m.filteredTasks, nil)
+		default:
+			m.state = ServicesList
+			m.showServicesTable(m.filteredServices, m.selectedService)
+		}
 		return m, nil
 
 	case commands.ClustersListed:
 		m.clustersForDisplay = msg.Clusters
+		m.filteredClusters = msg.Clusters
 		m.showClustersTable(msg.Clusters, msg.CurrentCluster)
 		return m, nil
 
-	case tea.KeyMsg:
-		// If we're in container mode, pass all keys to the container view
-		if m.state == ContainerAttached && m.containerView != nil {
-			*m.containerView, cmd = m.containerView.Update(msg)
+	case commands.StateSavedMsg:
+		if msg.Err != nil {
+			log.Printf("Warning: failed to save state: %v", msg.Err)
+		} else {
+			// Reload state to pick up saved custom commands / last commands
+			m.appState, _ = config.LoadState()
+		}
+		return m, nil
+
+	case commands.ContainerDetachedMsg:
+		m.state = m.stateBeforeAttach
+		m.attachError = msg.Err
+		m.attachingTarget = ""
+		m.commandTarget = commandTarget{}
+		log.Printf("Container attachment failed: %v", msg.Err)
+		// Restore the table for the state we're returning to
+		switch m.state {
+		case TaskList:
+			m.showTasksTable(m.filteredTasks, nil)
+		default:
+			m.state = ServicesList
+			m.showServicesTable(m.filteredServices, m.selectedService)
+		}
+		return m, nil
+
+	case spinner.TickMsg:
+		if m.state == ContainerAttaching {
+			var cmd tea.Cmd
+			m.spinner, cmd = m.spinner.Update(msg)
 			return m, cmd
+		}
+		return m, nil
+
+	case tea.KeyMsg:
+		// Clear attachment error on any key press
+		if m.attachError != nil {
+			m.attachError = nil
+		}
+
+		// During container attachment, only allow quit
+		if m.state == ContainerAttaching {
+			if key.Matches(msg, m.keys.Quit) {
+				return m, tea.Quit
+			}
+			return m, nil
+		}
+
+		// Handle custom command input mode
+		if m.state == CustomCommandInput {
+			switch {
+			case key.Matches(msg, m.keys.Enter):
+				cmdText := m.customCmdInput.Value()
+				if cmdText == "" {
+					return m, nil
+				}
+				item := commandPickerItem{
+					Name:   cmdText,
+					Cmd:    []string{"sh", "-c", cmdText},
+					Source: "history",
+				}
+				m.customCmdInput.SetValue("")
+				m.customCmdInput.Blur()
+				stateKey := m.customCommandKey()
+				return m, tea.Batch(
+					m.executeAttach(item),
+					commands.SaveCustomCommand(stateKey, cmdText),
+				)
+			case key.Matches(msg, m.keys.Cancel):
+				// Go back to command selection
+				m.state = CommandSelection
+				m.customCmdInput.SetValue("")
+				m.customCmdInput.Blur()
+				m.table.Focus()
+				m.showCommandPickerTable(m.commandPickerItems, m.lastSelectedCommand())
+				return m, nil
+			default:
+				m.customCmdInput, cmd = m.customCmdInput.Update(msg)
+				return m, cmd
+			}
 		}
 
 		// Handle filter mode
@@ -245,11 +364,27 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case key.Matches(msg, m.keys.Enter):
 			switch m.state {
+			case CommandSelection:
+				cursor := m.table.Cursor()
+				if cursor >= 0 && cursor < len(m.commandPickerItems) {
+					selected := m.commandPickerItems[cursor]
+					if selected.IsCustom {
+						// Transition to custom command text input
+						m.state = CustomCommandInput
+						m.customCmdInput.Focus()
+						m.table.Blur()
+						return m, textinput.Blink
+					}
+					// Execute the selected command
+					return m, m.executeAttach(selected)
+				}
+				return m, nil
+
 			case ClusterSelection:
 				// Get selected cluster and connect
 				cursor := m.table.Cursor()
-				if cursor >= 0 && cursor < len(m.clustersForDisplay) {
-					selectedCluster := m.clustersForDisplay[cursor]
+				if cursor >= 0 && cursor < len(m.filteredClusters) {
+					selectedCluster := m.filteredClusters[cursor]
 					// If it's the same cluster, just go back
 					if selectedCluster.Name == m.currentClusterName {
 						m.state = m.previousState
@@ -281,29 +416,56 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.clusterInfo.Cluster = m.conf.Clusters[selectedCluster.Name]
 					m.clusterInfo.Status = Connecting
 					m.state = Initializing
-					return m, commands.ConnectToCluster(m.conf.Clusters[selectedCluster.Name])
+					return m, tea.Batch(
+						commands.ConnectToCluster(m.conf.Clusters[selectedCluster.Name]),
+						commands.SaveLastCluster(selectedCluster.Name),
+					)
 				}
 
 			case StacksList:
 				// Get selected stack and navigate to services
 				cursor := m.table.Cursor()
-				if cursor >= 0 && cursor < len(m.stacks) && m.browser != nil {
-					selectedStack := m.stacks[cursor]
+				if cursor >= 0 && cursor < len(m.filteredStacks) && m.browser != nil {
+					selectedStack := m.filteredStacks[cursor]
 					m.clearFilter()
 					return m, commands.ListServices(m.browser, selectedStack)
 				}
 			case ServicesList:
 				cursor := m.table.Cursor()
-				if cursor >= 0 && cursor < len(m.services) && m.browser != nil {
-					selectedService := m.services[cursor]
+				if cursor >= 0 && cursor < len(m.filteredServices) && m.browser != nil {
+					selectedService := m.filteredServices[cursor]
 					m.clearFilter()
 					return m, commands.ListTasks(m.browser, selectedService)
 				}
 			}
 			return m, nil
 
+		case key.Matches(msg, m.keys.Cancel):
+			if m.state == CommandSelection {
+				m.state = m.commandTarget.Source
+				switch m.commandTarget.Source {
+				case ServicesList:
+					m.showServicesTable(m.filteredServices, m.selectedService)
+				case TaskList:
+					m.showTasksTable(m.filteredTasks, nil)
+				}
+				m.commandTarget = commandTarget{}
+				return m, nil
+			}
+
 		case key.Matches(msg, m.keys.Back):
 			switch m.state {
+			case CommandSelection:
+				// Go back to the view we came from
+				m.state = m.commandTarget.Source
+				switch m.commandTarget.Source {
+				case ServicesList:
+					m.showServicesTable(m.filteredServices, m.selectedService)
+				case TaskList:
+					m.showTasksTable(m.filteredTasks, nil)
+				}
+				m.commandTarget = commandTarget{}
+				return m, nil
 			case ClusterSelection:
 				// Go back to previous view without changing cluster
 				m.state = m.previousState
@@ -334,26 +496,42 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, commands.ListServices(m.browser, *m.selectedStack)
 
 		case key.Matches(msg, m.keys.Connect):
-			// Connect to container
+			// Open command picker before connecting
 			switch m.state {
 			case ServicesList:
 				cursor := m.table.Cursor()
-				if cursor >= 0 && cursor < len(m.services) && m.browser != nil {
-					selectedService := m.services[cursor]
-					return m, commands.AttachToService(m.browser, selectedService)
+				if cursor >= 0 && cursor < len(m.filteredServices) && m.browser != nil {
+					selectedService := m.filteredServices[cursor]
+					m.commandTarget = commandTarget{
+						Service: &selectedService,
+						Source:  ServicesList,
+					}
+					m.commandPickerItems = m.buildCommandPickerItems(selectedService.Name)
+					m.state = CommandSelection
+					m.showCommandPickerTable(m.commandPickerItems, m.lastSelectedCommand())
 				}
 			case TaskList:
 				cursor := m.table.Cursor()
-				if cursor >= 0 && cursor < len(m.services) && m.browser != nil {
-					selectedTask := m.tasks[cursor]
-					return m, commands.AttachToTask(m.browser, selectedTask)
+				if cursor >= 0 && cursor < len(m.filteredTasks) && m.browser != nil {
+					selectedTask := m.filteredTasks[cursor]
+					serviceName := ""
+					if m.selectedService != nil {
+						serviceName = m.selectedService.Name
+					}
+					m.commandTarget = commandTarget{
+						Task:   &selectedTask,
+						Source: TaskList,
+					}
+					m.commandPickerItems = m.buildCommandPickerItems(serviceName)
+					m.state = CommandSelection
+					m.showCommandPickerTable(m.commandPickerItems, m.lastSelectedCommand())
 				}
 			}
 			return m, nil
 
 		case key.Matches(msg, m.keys.Cluster):
-			// Switch cluster - not allowed in container view
-			if m.state != ContainerAttached {
+			// Switch cluster - not allowed in container view or while attaching
+			if m.state != ContainerAttached && m.state != ContainerAttaching {
 				m.previousState = m.state
 				m.state = ClusterSelection
 				m.clearFilter()
@@ -370,26 +548,40 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, textinput.Blink
 		}
 	}
-	if m.containerView != nil {
-		*m.containerView, cmd = m.containerView.Update(msg)
-		return m, cmd
-	}
 	m.table, cmd = m.table.Update(msg)
 	return m, cmd
 }
 
 // View implements tea.Model.
 func (m Model) View() string {
-	// If we're in container mode, show the container view
-	if m.state == ContainerAttached && m.containerView != nil {
-		return m.containerView.View()
-	}
-
 	header := ClusterInfoView(m.clusterInfo)
 
 	// Create contextual keymap for help display
 	contextualKeys := NewContextualKeyMap(&m.keys, m.state)
 	helpView := m.help.View(contextualKeys)
+
+	// Build main content
+	var mainContent string
+	switch m.state {
+	case ContainerAttaching:
+		msg := fmt.Sprintf("%s Connecting to %s...", m.spinner.View(), m.attachingTarget)
+		mainContent = lipgloss.NewStyle().
+			Foreground(ColorStatusPending).
+			Padding(2, 4).
+			Render(msg)
+	case CustomCommandInput:
+		prompt := lipgloss.NewStyle().
+			Foreground(ColorLabel).
+			Padding(1, 2).
+			Render("Enter command to execute in container:")
+		mainContent = lipgloss.JoinVertical(lipgloss.Left,
+			TableStyle.Render(m.table.View()),
+			prompt,
+			m.customCmdInput.View(),
+		)
+	default:
+		mainContent = TableStyle.Render(m.table.View())
+	}
 
 	// Build filter view
 	filterView := ""
@@ -400,11 +592,19 @@ func (m Model) View() string {
 	// Join all sections vertically
 	sections := []string{
 		header,
-		TableStyle.Render(m.table.View()),
+		mainContent,
 	}
 
 	if filterView != "" {
 		sections = append(sections, filterView)
+	}
+
+	if m.attachError != nil {
+		errorView := lipgloss.NewStyle().
+			Foreground(ColorError).
+			Padding(0, 2).
+			Render(fmt.Sprintf("Error: %v", m.attachError))
+		sections = append(sections, errorView)
 	}
 
 	sections = append(sections, helpView)
@@ -449,29 +649,29 @@ func (m *Model) refreshCurrentView() {
 
 	switch m.state {
 	case StacksList:
-		stacks := m.stacks
+		m.filteredStacks = m.stacks
 		if filterText != "" {
-			stacks = m.filterStacks(filterText)
+			m.filteredStacks = m.filterStacks(filterText)
 		}
-		m.showStacksTable(stacks, m.selectedStack)
+		m.showStacksTable(m.filteredStacks, m.selectedStack)
 	case ServicesList:
-		services := m.services
+		m.filteredServices = m.services
 		if filterText != "" {
-			services = m.filterServices(filterText)
+			m.filteredServices = m.filterServices(filterText)
 		}
-		m.showServicesTable(services, m.selectedService)
+		m.showServicesTable(m.filteredServices, m.selectedService)
 	case TaskList:
-		tasks := m.tasks
+		m.filteredTasks = m.tasks
 		if filterText != "" {
-			tasks = m.filterTasks(filterText)
+			m.filteredTasks = m.filterTasks(filterText)
 		}
-		m.showTasksTable(tasks, nil)
+		m.showTasksTable(m.filteredTasks, nil)
 	case ClusterSelection:
-		clusters := m.clustersForDisplay
+		m.filteredClusters = m.clustersForDisplay
 		if filterText != "" {
-			clusters = m.filterClusters(filterText)
+			m.filteredClusters = m.filterClusters(filterText)
 		}
-		m.showClustersTable(clusters, m.currentClusterName)
+		m.showClustersTable(m.filteredClusters, m.currentClusterName)
 	}
 }
 
