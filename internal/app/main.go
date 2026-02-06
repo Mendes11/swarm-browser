@@ -16,6 +16,7 @@ import (
 	"github.com/mendes11/swarm-browser/internal/config"
 	"github.com/mendes11/swarm-browser/internal/core"
 	"github.com/mendes11/swarm-browser/internal/core/models"
+	"github.com/mendes11/swarm-browser/internal/shell"
 )
 
 type Model struct {
@@ -324,7 +325,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				item := commandPickerItem{
 					Name:   cmdText,
-					Cmd:    []string{"sh", "-c", cmdText},
+					Cmd:    []string{shell.UserShell(), "-c", cmdText},
 					Source: "history",
 				}
 				m.customCmdInput.SetValue("")

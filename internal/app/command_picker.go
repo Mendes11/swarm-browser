@@ -8,6 +8,7 @@ import (
 	"github.com/mendes11/swarm-browser/internal/app/commands"
 	"github.com/mendes11/swarm-browser/internal/config"
 	"github.com/mendes11/swarm-browser/internal/core/models"
+	"github.com/mendes11/swarm-browser/internal/shell"
 )
 
 // commandPickerItem represents a row in the command picker table.
@@ -36,7 +37,7 @@ func (m *Model) buildCommandPickerItems(serviceName string) []commandPickerItem 
 		if matchesService(cmd.MatchServices, serviceName) {
 			items = append(items, commandPickerItem{
 				Name:   cmd.Name,
-				Cmd:    []string{"sh", "-c", cmd.Cmd},
+				Cmd:    []string{shell.UserShell(), "-c", cmd.Cmd},
 				Source: "config",
 			})
 		}
@@ -48,7 +49,7 @@ func (m *Model) buildCommandPickerItems(serviceName string) []commandPickerItem 
 		for _, cmd := range history {
 			items = append(items, commandPickerItem{
 				Name:   cmd,
-				Cmd:    []string{"sh", "-c", cmd},
+				Cmd:    []string{shell.UserShell(), "-c", cmd},
 				Source: "history",
 			})
 		}
@@ -56,8 +57,8 @@ func (m *Model) buildCommandPickerItems(serviceName string) []commandPickerItem 
 
 	// 3. Shell (always present)
 	items = append(items, commandPickerItem{
-		Name:    "Shell (bash/sh)",
-		Cmd:     []string{"/bin/bash"},
+		Name:    "Shell",
+		Cmd:     []string{shell.UserShell()},
 		IsShell: true,
 		Source:  "builtin",
 	})

@@ -11,6 +11,7 @@ import (
 
 	"github.com/mendes11/swarm-browser/internal/core"
 	"github.com/mendes11/swarm-browser/internal/core/models"
+	"github.com/mendes11/swarm-browser/internal/shell"
 	"github.com/moby/moby/api/types/swarm"
 )
 
@@ -259,12 +260,7 @@ func (d *DevBrowser) AttachToService(ctx context.Context, service models.Service
 	// Determine which shell to use
 	shellCmd := cmd
 	if len(shellCmd) == 0 {
-		// Default to bash, fallback to sh if not available
-		if _, err := exec.LookPath("bash"); err == nil {
-			shellCmd = []string{"bash"}
-		} else {
-			shellCmd = []string{"sh"}
-		}
+		shellCmd = []string{shell.UserShell()}
 	}
 
 	// Start a local process to simulate container
@@ -370,12 +366,7 @@ func (d *DevBrowser) AttachToTask(ctx context.Context, task models.Task, cmd []s
 	// Determine which shell to use
 	shellCmd := cmd
 	if len(shellCmd) == 0 {
-		// Default to bash, fallback to sh if not available
-		if _, err := exec.LookPath("bash"); err == nil {
-			shellCmd = []string{"bash"}
-		} else {
-			shellCmd = []string{"sh"}
-		}
+		shellCmd = []string{shell.UserShell()}
 	}
 
 	// Start a local process to simulate container

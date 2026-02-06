@@ -7,6 +7,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/mendes11/swarm-browser/internal/core/models"
+	"github.com/mendes11/swarm-browser/internal/shell"
 )
 
 type HookSucceeded struct {
@@ -23,7 +24,7 @@ func RunClusterHook(cluster models.Cluster, hook models.Hook) tea.Cmd {
 	return func() tea.Msg {
 		log.Printf("Running hook %q for cluster %s: %s", hook.Name, cluster.Name, hook.Cmd)
 
-		cmd := exec.Command("sh", "-c", hook.Cmd)
+		cmd := exec.Command(shell.UserShell(), "-c", hook.Cmd)
 		output, err := cmd.CombinedOutput()
 		if err != nil {
 			log.Printf("Hook %q failed for cluster %s: %v, output: %s", hook.Name, cluster.Name, err, string(output))
