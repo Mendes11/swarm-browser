@@ -17,7 +17,7 @@ type ContainerConnection struct {
 }
 
 func (c *ContainerConnection) ResizeTTY(ctx context.Context, width, height uint) error {
-	if err := c.cli.ContainerResize(ctx, c.containerID, container.ResizeOptions{
+	if err := c.cli.ContainerExecResize(ctx, c.attachID, container.ResizeOptions{
 		Height: height,
 		Width:  width,
 	}); err != nil {
